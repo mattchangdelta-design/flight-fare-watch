@@ -8,3 +8,6 @@
 > Commits you push to the connected branch sync back to Lovable and show up in
 > the editor, so keep the branch in a working state.
 <!-- LOVABLE:END -->
+
+- Auth uses Lovable Cloud built-in auth.users only (no app tables); app data will live outside this backend. Why: course architecture keeps Supabase auth-only.
+- Signed-in pages live under src/routes/_authenticated/ (client-only gate redirecting to /signin). Why: session is in localStorage.
