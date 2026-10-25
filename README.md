@@ -52,3 +52,14 @@ cd <repository-name>
 npm i
 npm run dev
 ```
+
+## Build & deploy
+
+This is a static single-page app (Vite + React + React Router, no SSR).
+
+```sh
+npm run build     # → dist/
+npm run preview   # serve dist/ locally with SPA fallback
+```
+
+**Vercel:** import the repo; the framework preset is Vite and the output directory is `dist`. `vercel.json` rewrites all paths to `/index.html` so deep links such as `/app` load correctly. Supabase settings are read at build time from `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` (from `.env` or the Vercel project's environment variables).
