@@ -13,7 +13,7 @@ Card 1: 「盯緊熱門航線 (Always-on route watching)」 — 持續監控台�
 Card 2: 「達標自動通知 (Target-price email alerts)」 — 低於你設定的目標價，就寄 email 提醒你，附上立即訂購連結。
 Card 3: 「隨時取消 (Cancel anytime)」 — 月訂閱制，不想用隨時停，沒有綁約。
 Footer with copyright 「© 2026 Flight Price Notifier」.
-Authentication using Lovable's built-in Supabase-style auth (use whatever auth backend Lovable provides by default — Lovable Cloud is fine for this v1; we'll swap to a user-owned Supabase project in a later step):
+Authentication using the project's own Supabase project (email + password, Supabase `auth.users`):
 
 Sign Up page with email + password
 Sign In page with email + password
@@ -62,4 +62,4 @@ npm run build     # → dist/
 npm run preview   # serve dist/ locally with SPA fallback
 ```
 
-**Vercel:** import the repo; the framework preset is Vite and the output directory is `dist`. `vercel.json` rewrites all paths to `/index.html` so deep links such as `/app` load correctly. Supabase settings are read at build time from `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` (from `.env` or the Vercel project's environment variables).
+**Vercel:** import the repo; the framework preset is Vite and the output directory is `dist`. `vercel.json` rewrites all paths to `/index.html` so deep links such as `/app` load correctly. Supabase settings are read at build time from `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` (from `.env` or the Vercel project's environment variables). The publishable key (`sb_publishable_*`) is the browser-safe, RLS-gated key that replaces the legacy anon key.
