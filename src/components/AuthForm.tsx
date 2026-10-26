@@ -24,6 +24,9 @@ export function AuthForm({ mode }: { mode: "signin" | "signup" }) {
     setLoading(false);
     if (error) return setError(error.message);
     if (data.session) navigate("/app");
+    // Supabase answers a repeat sign-up with a user that has no identities and sends no email.
+    else if (isSignup && data.user?.identities?.length === 0)
+      setError("這個 email 已經註冊過了，請直接登入；忘記密碼可以用「忘記密碼」重設。 · This email is already registered.");
     else setError("請到信箱確認後再登入 · Please confirm your email, then sign in.");
   }
 
@@ -46,7 +49,14 @@ export function AuthForm({ mode }: { mode: "signin" | "signup" }) {
             <Input id="email" type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="password">Password / 密碼</Label>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="password">Password / 密碼</Label>
+              {!isSignup && (
+                <Link to="/forgot-password" className="text-xs text-primary-glow hover:underline">
+                  忘記密碼？
+                </Link>
+              )}
+            </div>
             <Input id="password" type="password" required minLength={6} autoComplete={isSignup ? "new-password" : "current-password"} value={password} onChange={(e) => setPassword(e.target.value)} />
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}

@@ -7,7 +7,7 @@ import { routes } from "@/routes";
 const leafPath = (url: string) => matchRoutes(routes, url)?.at(-1)?.route.path;
 
 describe("App routing", () => {
-  it.each(["/", "/signin", "/signup", "/app"])(
+  it.each(["/", "/signin", "/signup", "/forgot-password", "/reset-password", "/app"])(
     "matches a page for %s instead of not found",
     (url) => {
       expect(leafPath(url)).toBe(url);
