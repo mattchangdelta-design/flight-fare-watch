@@ -36,8 +36,7 @@ def auth_email(e):
     _cache[tok] = (email, time.time() + 300)
     return email
 import datetime, urllib.parse
-PLANS = {"tokyo": ("TPE", "TYO"), "seoul": ("TPE", "SEL")}
-TZ = {"TPE": 8, "TYO": 9, "SEL": 9}  # city UTC offsets (no DST on these routes)
+import places  # common/places.py, zipped alongside
 MAX_DAYS = 92
 _tp = None
 def resp(code, body):
@@ -61,11 +60,13 @@ def fetch_month(o, d, month):
     with urllib.request.urlopen(req, timeout=10) as r:
         body = json.loads(r.read())
     return (body.get("data") or []) if body.get("success") else []
-def arrive(dep_iso, minutes, city):
-    if not dep_iso or not minutes:
+def arrive(dep_iso, minutes, tz_iso):
+    """Arrival time in the arrival city's offset, taken from a timestamp that departs from that city
+    (outbound arrival -> the return departure's offset; return arrival -> the outbound departure's)."""
+    if not dep_iso or not minutes or not tz_iso:
         return None
     t = datetime.datetime.fromisoformat(dep_iso) + datetime.timedelta(minutes=minutes)
-    return t.astimezone(datetime.timezone(datetime.timedelta(hours=TZ.get(city, 0)))).isoformat()
+    return t.astimezone(datetime.datetime.fromisoformat(tz_iso).tzinfo).isoformat()
 def hhmm(s):
     h, m = s.split(":")
     return int(h) * 60 + int(m)
@@ -77,9 +78,10 @@ def handler(e, c):
     except AuthDown:
         return resp(503, {"error": "auth service unavailable"})
     q = e.get("queryStringParameters") or {}
-    plan = q.get("plan_name")
-    if plan not in PLANS:
-        return resp(400, {"error": "plan_name must be tokyo or seoul"})
+    o, d, err = places.parse_route(q)
+    if err:
+        return resp(400, {"error": err})
+    route = f"{o}-{d}"
     try:
         d1 = datetime.date.fromisoformat(q["date_from"])
         d2 = datetime.date.fromisoformat(q["date_to"])
@@ -99,7 +101,6 @@ def handler(e, c):
     if (n1 is not None and n1 < 0) or (n1 is not None and n2 is not None and n2 < n1):
         return resp(400, {"error": "trip length range is invalid"})
     need_return = any(v is not None for v in (n1, n2, rt1, rt2))
-    o, d = PLANS[plan]
     rows, errors = [], 0
     for m in months(d1, d2):
         try:
@@ -133,13 +134,13 @@ def handler(e, c):
         seen.add(key)
         out.append({"price": r.get("price"), "airline": r.get("airline"), "flight_number": r.get("flight_number"),
             "origin_airport": r.get("origin_airport"), "destination_airport": r.get("destination_airport"),
-            "departure_at": dep, "arrival_at": arrive(dep, r.get("duration_to"), d),
-            "return_at": r.get("return_at"), "return_arrival_at": arrive(r.get("return_at"), r.get("duration_back"), o),
+            "departure_at": dep, "arrival_at": arrive(dep, r.get("duration_to"), r.get("return_at")),
+            "return_at": r.get("return_at"), "return_arrival_at": arrive(r.get("return_at"), r.get("duration_back"), dep),
             "transfers": r.get("transfers"), "return_transfers": r.get("return_transfers"),
             "link": ("https://www.aviasales.com" + r["link"]) if r.get("link") else None})
         if len(out) == 10:
             break
-    print("search", plan, d1, d2, q.get("time_from"), q.get("time_to"), "trip", n1, n2,
+    print("search", route, d1, d2, q.get("time_from"), q.get("time_to"), "trip", n1, n2,
           "ret", q.get("ret_time_from"), q.get("ret_time_to"), "raw", len(rows), "matched", len(out))
-    return resp(200, {"plan_name": plan, "currency": "TWD", "scanned": len(rows), "results": out,
+    return resp(200, {"route": route, "origin_name": places.name(o), "destination_name": places.name(d), "currency": "TWD", "scanned": len(rows), "results": out,
                       "partial": errors > 0})

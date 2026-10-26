@@ -26,13 +26,14 @@ def resend_cfg():
     return _resend
 
 
-def route_name(route):
+def route_name(route, row=None):
     o, d = route.split("-")
-    return f"{CITY.get(o, o)} → {CITY.get(d, d)}"
+    row = row or {}
+    return f"{row.get('origin_name') or CITY.get(o, o)} → {row.get('destination_name') or CITY.get(d, d)}"
 
 
 def render(msg, row):
-    r = route_name(msg["route"])
+    r = route_name(msg["route"], row)
     until = msg.get("current_period_end_date") or row.get("current_period_end_date") or "-"
     tp = row.get("target_price")
     target = f"NT${int(tp):,}" if tp is not None else "-"

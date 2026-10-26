@@ -5,6 +5,7 @@ from decimal import Decimal
 import boto3
 from boto3.dynamodb.conditions import Attr
 import settings  # common/settings.py, zipped alongside
+import places  # common/places.py, zipped alongside
 
 UA = "Mozilla/5.0 (compatible; flight-notifier/1.0)"
 _sm = boto3.client("secretsmanager")
@@ -106,6 +107,8 @@ def handler(event, context):
         if tp < Decimal(str(tw["price"])):
             continue
         body = {"email": it["email"], "route": route, "plan_name": it.get("plan_name"),
+                "origin_name": it.get("origin_name") or places.name(origin),
+                "destination_name": it.get("destination_name") or places.name(destination),
                 "target_price": int(tp), "cheapest": tw}
         if us:
             body["cheapest_usd"] = us

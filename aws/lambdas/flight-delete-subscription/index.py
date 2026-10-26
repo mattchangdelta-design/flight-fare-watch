@@ -35,7 +35,7 @@ def auth_email(e):
         return None
     _cache[tok] = (email, time.time() + 300)
     return email
-PLANS = {"tokyo": "TPE-TYO", "seoul": "TPE-SEL"}
+import places  # common/places.py, zipped alongside
 T = boto3.resource("dynamodb").Table("subscriptions")
 def resp(code, body):
     return {"statusCode": code, "headers": {"content-type": "application/json"}, "body": json.dumps(body, ensure_ascii=False)}
@@ -46,14 +46,14 @@ def handler(e, c):
         return resp(503, {"error": "auth service unavailable"})
     if not email:
         return resp(401, {"error": "sign in required"})
-    plan = (e.get("queryStringParameters") or {}).get("plan_name")
-    if plan not in PLANS:
-        return resp(400, {"error": "plan_name must be tokyo or seoul"})
-    key = {"email": email, "route": PLANS[plan]}
+    route = places.route_key(e.get("queryStringParameters") or {})
+    if not route:
+        return resp(400, {"error": "route must look like TPE-OSA"})
+    key = {"email": email, "route": route}
     it = T.get_item(Key=key).get("Item") or {}
     st = it.get("subscription_status")
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     if st == "active" or (st == "cancelled" and it.get("current_period_end", "") >= now):
         return resp(409, {"error": "付費中的訂閱請先取消訂閱"})
     T.delete_item(Key=key)
-    return resp(200, {"ok": True, "email": email, "route": PLANS[plan], "deleted": True})
+    return resp(200, {"ok": True, "email": email, "route": route, "deleted": True})

@@ -53,6 +53,12 @@ def parse_route(d):
     return o, dst, None
 
 
+def route_key(d):
+    """Route string for an existing row ({"route"} or legacy {"plan_name"}); format check only."""
+    route = str(d.get("route") or LEGACY.get(d.get("plan_name")) or "").strip().upper()
+    return route if _RE.match(route) else None
+
+
 def search(q, limit=10):
     q = (q or "").strip()
     if not q:

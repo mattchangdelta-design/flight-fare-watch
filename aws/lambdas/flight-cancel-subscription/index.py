@@ -1,16 +1,15 @@
-"""flight-cancel-subscription (POST /cancel, body {"plan_name"}).
+"""flight-cancel-subscription (POST /cancel, body {"route"}; legacy {"plan_name"} still accepted).
 
 Stops future charges with ECPay CreditCardPeriodAction Action=Cancel, then marks the row
 cancelled while keeping current_period_end: the subscriber keeps getting alerts until the
 period they paid for ends (the parser expires the row afterwards). Queues the cancel email.
-Deployed from S3 together with common/auth.py and common/ecpay.py."""
+Deployed from S3 together with common/auth.py, common/ecpay.py and common/places.py."""
 import base64, json, os, time, urllib.parse, urllib.request
 import boto3
 from botocore.exceptions import ClientError
 from auth import auth_email, AuthDown, UA
 import ecpay
-
-PLANS = {"tokyo": "TPE-TYO", "seoul": "TPE-SEL"}
+import places
 T = boto3.resource("dynamodb").Table("subscriptions")
 SQS = boto3.client("sqs")
 QURL = os.environ["STATUS_QUEUE_URL"]
@@ -49,12 +48,12 @@ def handler(e, c):
     if e.get("isBase64Encoded"):
         b = base64.b64decode(b).decode()
     try:
-        plan = json.loads(b).get("plan_name")
+        route = places.route_key(json.loads(b))
     except Exception:
         return resp(400, {"error": "invalid JSON"})
-    if plan not in PLANS:
-        return resp(400, {"error": "plan_name must be tokyo or seoul"})
-    key = {"email": email, "route": PLANS[plan]}
+    if not route:
+        return resp(400, {"error": "route must look like TPE-OSA"})
+    key = {"email": email, "route": route}
     it = T.get_item(Key=key).get("Item")
     if not it:
         return resp(404, {"error": "找不到這個訂閱"})

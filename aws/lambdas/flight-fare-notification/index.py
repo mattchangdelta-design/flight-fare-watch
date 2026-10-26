@@ -32,6 +32,12 @@ def _od(route):
     return o, d
 
 
+def _names(fare):
+    """Display names for the route: from the message (set by the parser), else the old table, else codes."""
+    o, d = _od(fare["route"])
+    return fare.get("origin_name") or CITY.get(o, o), fare.get("destination_name") or CITY.get(d, d)
+
+
 def _ddmm(iso):
     return iso[8:10] + iso[5:7] if iso else ""
 
@@ -62,7 +68,6 @@ def _when(iso):
 
 def details(fare):
     """Plain-text detail lines shared by the HTML and text renderers."""
-    o, d = _od(fare["route"])
     c = fare["cheapest"]
     code = c.get("airline") or ""
     parts = [f"{AIRLINE[code]}（{code}）" if code in AIRLINE else (code or "-")]
@@ -75,10 +80,11 @@ def details(fare):
     if fn not in (None, ""):
         s = str(fn)
         out_fn = " · 航班 " + (s if s[:1].isalpha() else f"{code} {s}".strip())
-    leg = lambda iso, city: f"{_when(iso)} {CITY.get(city, city)}出發" if iso else "未提供"
+    on, dn = _names(fare)
+    leg = lambda iso, nm: f"{_when(iso)} {nm}出發" if iso else "未提供"
     return [f"航空公司：{' · '.join(parts)}",
-            f"去程：{leg(c.get('depart_date'), o)}{out_fn if c.get('depart_date') else ''}",
-            f"回程：{leg(c.get('return_date'), d)}",
+            f"去程：{leg(c.get('depart_date'), on)}{out_fn if c.get('depart_date') else ''}",
+            f"回程：{leg(c.get('return_date'), dn)}",
             "時間為出發地當地時間；抵達時間與機場請以訂購頁面為準。"]
 
 
@@ -92,14 +98,14 @@ def booking_url(fare, marker=None):
 
 
 def subject(fare):
-    o, d = _od(fare["route"])
-    return f"✈️ {CITY.get(o, o)} → {CITY.get(d, d)} 降價通知！NT${fare['cheapest']['price']:,} 已達標"
+    on, dn = _names(fare)
+    return f"✈️ {on} → {dn} 降價通知！NT${fare['cheapest']['price']:,} 已達標"
 
 
 def render_text(fare, target_price, marker=None, usd_price=None):
-    o, d = _od(fare["route"])
     c = fare["cheapest"]
-    lines = [f"{CITY.get(o, o)} → {CITY.get(d, d)} 來回最低價 NT${c['price']:,}",
+    on, dn = _names(fare)
+    lines = [f"{on} → {dn} 來回最低價 NT${c['price']:,}",
              f"你的目標價：NT${target_price:,}"]
     if usd_price is not None:
         lines.append(f"約 US${usd_price:,}")
@@ -110,7 +116,7 @@ def render_text(fare, target_price, marker=None, usd_price=None):
 
 
 def render_html(fare, target_price, marker=None, usd_price=None):
-    o, d = _od(fare["route"])
+    on, dn = _names(fare)
     c = fare["cheapest"]
     usd = f'<p style="margin:4px 0 0;color:#555">約 US${usd_price:,}</p>' if usd_price is not None else ""
     url = escape(booking_url(fare, marker), quote=True)
@@ -119,7 +125,7 @@ def render_html(fare, target_price, marker=None, usd_price=None):
     note = f'<p style="margin:8px 0 0;font-size:12px;color:#777">{escape(det[-1])}</p>'
     return (
         '<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:480px;color:#111">'
-        f'<p style="margin:0 0 8px;font-size:15px">{CITY.get(o, o)} → {CITY.get(d, d)} 來回最低價已低於你的目標價</p>'
+        f'<p style="margin:0 0 8px;font-size:15px">{escape(on)} → {escape(dn)} 來回最低價已低於你的目標價</p>'
         f'<p style="margin:0;font-size:32px;font-weight:700">NT${c["price"]:,}</p>{usd}'
         f'<p style="margin:12px 0 0">你的目標價：NT${target_price:,}</p>'
         f'<div style="margin:12px 0 0">{rows}{note}</div>'
