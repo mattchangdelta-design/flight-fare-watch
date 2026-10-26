@@ -4,6 +4,7 @@ import os, json, datetime, urllib.request, urllib.parse, urllib.error
 from decimal import Decimal
 import boto3
 from boto3.dynamodb.conditions import Attr
+import settings  # common/settings.py, zipped alongside
 
 UA = "Mozilla/5.0 (compatible; flight-notifier/1.0)"
 _sm = boto3.client("secretsmanager")
@@ -85,9 +86,11 @@ def handler(event, context):
     origin, destination = event["origin"], event["destination"]
     route = event.get("route") or f"{origin}-{destination}"
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    subs = [it for it in subscribers(route) if gate(it, now)]
+    billing = settings.billing_enabled()
+    # gate() always runs so lapsed cancelled rows still flip to expired; with billing off everyone is served.
+    subs = [it for it in subscribers(route) if gate(it, now) or not billing]
     if not subs:
-        print(route, "no paying subscribers - skipping")
+        print(route, "no paying subscribers - skipping" if billing else "no subscribers - skipping")
         return {"ok": True, "route": route, "matched": 0}
     month = next_month()
     tok = token()
@@ -95,7 +98,7 @@ def handler(event, context):
     if not tw:
         print("no TWD fare for", route, month, "(empty/429) - skipping")
         return {"ok": True, "route": route, "matched": 0}
-    print(route, month, "cheapest", json.dumps(tw), "paying", len(subs))
+    print(route, month, "cheapest", json.dumps(tw), "served", len(subs), "billing", billing)
     us = fetch_cheapest(origin, destination, month, tok, "usd")  # may be None - never block on it
     matched = 0
     for it in subs:

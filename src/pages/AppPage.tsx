@@ -1,9 +1,11 @@
 import { useNavigate, useSearchParams } from "react-router";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useEffect, useState } from "react";
 import { PlanCards, type Prefill } from "@/components/PlanCards";
 import { FareSearch } from "@/components/FareSearch";
+import { AdminBillingSwitch } from "@/components/AdminBillingSwitch";
+import { MONTHLY_FEE_TWD, getSettings } from "@/lib/flight-api";
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/Logo";
 import { useAuthUser } from "@/components/RequireAuth";
@@ -21,6 +23,9 @@ export function AppPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [prefill, setPrefill] = useState<Prefill | null>(null);
+  const settings = useQuery({ queryKey: ["settings"], queryFn: getSettings });
+  // If the settings can't be read, assume billing is on (same default as the backend).
+  const billing = settings.data?.billing_enabled ?? true;
   const [searchParams, setSearchParams] = useSearchParams();
   // Set by the ECPay return redirect (flight-ecpay-result): success | failed | unknown.
   const [purchase] = useState(() => searchParams.get("purchase"));
@@ -84,13 +89,24 @@ export function AppPage() {
         )}
         <h1 className="text-3xl font-bold break-all">Hi {user.email}</h1>
         <p className="mt-2 text-muted-foreground">
-          選一條航線、設定目標價，下個月的來回最低價一達標，我們就寄信通知你。
+          先查詢目前的票價，再幫想去的航線設定目標價。
+          {billing ? `訂閱後（月費 NT$${MONTHLY_FEE_TWD}），` : ""}
+          只要下個月出發的來回最低價低於你的目標價，我們就會寄信通知你。
         </p>
         {user.email ? (
           <>
+            {settings.data?.is_admin && (
+              <div className="mt-8">
+                <AdminBillingSwitch settings={settings.data} />
+              </div>
+            )}
             <FareSearch onPick={(plan, price) => setPrefill({ plan, price, nonce: Date.now() })} />
             <h2 className="mt-10 text-lg font-semibold">我的追蹤</h2>
-            <PlanCards email={user.email} prefill={prefill} />
+            {settings.isPending ? (
+              <p className="mt-4 text-muted-foreground">載入中…</p>
+            ) : (
+              <PlanCards email={user.email} prefill={prefill} billing={billing} />
+            )}
           </>
         ) : (
           <p className="mt-8 text-destructive">這個帳號沒有 email，無法訂閱通知。</p>

@@ -4,13 +4,16 @@ M2: a new or unpaid subscription is written as pending_payment and the response 
 auto-submitting ECPay 信用卡定期定額 checkout form (text/html). A paying subscriber
 (active, or cancelled but still inside the paid period) only updates the target price
 in place and gets JSON back. Only the ECPay callbacks ever set active.
-Deployed from S3 together with common/auth.py and common/ecpay.py."""
+When billing is switched off (common/settings.py), new/unpaid rows are saved as status "free"
+and the response is JSON - no checkout. Paying rows are untouched either way.
+Deployed from S3 together with common/auth.py, common/ecpay.py and common/settings.py."""
 import base64, json, os
 from decimal import Decimal, InvalidOperation
 from html import escape
 import boto3
 from auth import auth_email, AuthDown
 import ecpay
+import settings
 
 API = os.environ.get("API_BASE", "https://z3i3apvemd.execute-api.us-east-1.amazonaws.com").strip().rstrip("/")
 SITE = os.environ.get("SITE_URL", "https://flight-fare-watch.vercel.app").strip().rstrip("/")
@@ -82,6 +85,15 @@ def handler(e, c):
                           "target_price": int(tp), "currency": "TWD",
                           "subscription_status": cur.get("subscription_status"),
                           "current_period_end_date": cur.get("current_period_end_date")})
+
+    if not settings.billing_enabled():
+        # Free mode: no checkout. A previous pending/expired/free row just becomes "free".
+        T.update_item(Key=key,
+            UpdateExpression="SET " + sets + ", created_at=if_not_exists(created_at,:n), subscription_status=:s",
+            ExpressionAttributeValues={**base, ":s": "free"})
+        print("free subscription", email, route)
+        return resp(200, {"ok": True, "free": True, "email": email, "route": route, "plan_name": plan,
+                          "target_price": int(tp), "currency": "TWD", "subscription_status": "free"})
 
     conf = ecpay.cfg()
     amount = str(int(conf["amount"]))

@@ -10,7 +10,7 @@ import {
   PLANS,
   cancelSubscription,
   deleteSubscription,
-  effectiveStatus,
+  displayStatus,
   goToCheckout,
   listSubscriptions,
   saveSubscription,
@@ -34,6 +34,7 @@ const BADGE: Record<
   pending_payment: { label: "未完成付款", variant: "outline" },
   cancelled: { label: "已取消續訂", variant: "secondary" },
   expired: { label: "已結束", variant: "secondary" },
+  free: { label: "追蹤中", variant: "default" },
 };
 
 function PlanCard({
@@ -41,11 +42,13 @@ function PlanCard({
   email,
   sub,
   prefill,
+  billing,
 }: {
   plan: Plan;
   email: string;
   sub: Subscription | undefined;
   prefill: Prefill | null;
+  billing: boolean;
 }) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
@@ -53,9 +56,10 @@ function PlanCard({
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<"cancel" | "delete" | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
-  const status = sub ? effectiveStatus(sub) : undefined;
-  // Paying subscribers change the target in place; everyone else goes through checkout.
+  const status = sub ? displayStatus(sub, billing) : undefined;
+  // Paying subscribers change the target in place; with billing on everyone else goes through checkout.
   const paying = status === "active" || status === "cancelled";
+  const needsCheckout = billing && !paying;
 
   useEffect(() => {
     if (!prefill || prefill.plan !== plan.name) return;
@@ -164,6 +168,11 @@ function PlanCard({
           {status === "expired" && (
             <p className="mt-2 text-sm text-muted-foreground">訂閱已結束，不會再收到通知。</p>
           )}
+          {status === "free" && (
+            <p className="mt-2 text-sm text-muted-foreground">
+              目前免費開放，票價達標就會寄信通知你。
+            </p>
+          )}
 
           {confirming === "cancel" ? (
             <div className="mt-4 space-y-2 rounded-xl border border-border p-3">
@@ -224,7 +233,7 @@ function PlanCard({
               )}
               <Button
                 variant="outline"
-                className={paying ? "flex-1" : undefined}
+                className={paying || status === "free" ? "flex-1" : undefined}
                 disabled={busy}
                 onClick={startEdit}
               >
@@ -260,7 +269,7 @@ function PlanCard({
             onChange={(e) => setValue(e.target.value)}
           />
           <p className="text-xs text-muted-foreground">{plan.hint}</p>
-          {!paying && (
+          {needsCheckout && (
             <p className="text-xs text-muted-foreground">
               送出後前往綠界以信用卡付款，月費 {fee}，每月自動扣款，可隨時取消續訂。
             </p>
@@ -268,7 +277,15 @@ function PlanCard({
           {error && <p className="text-sm text-destructive">{error}</p>}
           <div className="flex gap-2">
             <Button type="submit" className="flex-1" disabled={busy}>
-              {save.isPending ? (paying ? "儲存中…" : "前往付款…") : paying ? "儲存" : "訂閱並付款"}
+              {save.isPending
+                ? needsCheckout
+                  ? "前往付款…"
+                  : "儲存中…"
+                : needsCheckout
+                  ? "訂閱並付款"
+                  : sub
+                    ? "儲存"
+                    : "開始追蹤"}
             </Button>
             {sub && (
               <Button type="button" variant="ghost" onClick={() => setEditing(false)}>
@@ -282,7 +299,15 @@ function PlanCard({
   );
 }
 
-export function PlanCards({ email, prefill }: { email: string; prefill: Prefill | null }) {
+export function PlanCards({
+  email,
+  prefill,
+  billing,
+}: {
+  email: string;
+  prefill: Prefill | null;
+  billing: boolean;
+}) {
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["subscriptions", email],
     queryFn: () => listSubscriptions(),
@@ -302,6 +327,7 @@ export function PlanCards({ email, prefill }: { email: string; prefill: Prefill 
           email={email}
           sub={byRoute.get(plan.route)}
           prefill={prefill}
+          billing={billing}
         />
       ))}
     </div>

@@ -34,7 +34,7 @@ export const PLANS: Plan[] = [
 // which is what the checkout actually charges.
 export const MONTHLY_FEE_TWD = 300;
 
-export type SubscriptionStatus = "pending_payment" | "active" | "cancelled" | "expired";
+export type SubscriptionStatus = "pending_payment" | "active" | "cancelled" | "expired" | "free";
 
 export type Subscription = {
   email: string;
@@ -60,6 +60,39 @@ export function effectiveStatus(sub: Subscription, now = new Date()): Subscripti
     if (!Number.isFinite(end) || end < now.getTime()) return "expired";
   }
   return st;
+}
+
+/**
+ * What a card shows once the site-wide billing switch is taken into account:
+ * paying rows always keep their real status; with billing off every other row is "free";
+ * with billing on, a row created during a free period needs payment like any unpaid row.
+ */
+export function displayStatus(sub: Subscription, billing: boolean): SubscriptionStatus {
+  const st = effectiveStatus(sub);
+  if (st === "active" || st === "cancelled") return st;
+  if (!billing) return "free";
+  return st === "free" ? "pending_payment" : st;
+}
+
+export type SiteSettings = {
+  billing_enabled: boolean;
+  is_admin: boolean;
+  updated_at?: string | null;
+  updated_by?: string | null;
+};
+
+export async function getSettings(): Promise<SiteSettings> {
+  const res = await fetch(`${FLIGHT_API_URL}/settings`, { headers: await authHeaders() });
+  return (await readJson(res)) as SiteSettings;
+}
+
+export async function setBillingEnabled(billing_enabled: boolean): Promise<SiteSettings> {
+  const res = await fetch(`${FLIGHT_API_URL}/settings`, {
+    method: "PUT",
+    headers: { "content-type": "application/json", ...(await authHeaders()) },
+    body: JSON.stringify({ billing_enabled }),
+  });
+  return (await readJson(res)) as SiteSettings;
 }
 
 async function readJson(res: Response) {
@@ -95,7 +128,7 @@ export async function deleteSubscription(plan_name: PlanName): Promise<void> {
 export type SaveResult =
   /** Unpaid subscription: an auto-submitting ECPay checkout page to hand the browser to. */
   | { kind: "checkout"; html: string }
-  /** Paying subscriber: the target price was changed in place, no payment needed. */
+  /** Paying subscriber (target changed in place) or billing switched off (saved for free). */
   | { kind: "updated" };
 
 // /subscribe answers text/html (ECPay checkout form) or application/json (in-place update),

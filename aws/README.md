@@ -10,6 +10,7 @@ Site ──POST /subscribe──────▶ flight-save-subscription ──�
      ──GET /subscriptions───▶ flight-list-subscriptions
      ──DELETE /subscriptions▶ flight-delete-subscription (refuses paid subscriptions: 409)
      ──POST /cancel─────────▶ flight-cancel-subscription ──▶ ECPay CreditCardPeriodAction (Cancel)
+     ──GET|PUT /settings─────▶ flight-settings ──▶ s3://flight-config-656923393380/settings/site.json
      ──GET /fares────────────▶ flight-search-fares ──▶ Travelpayouts /aviasales/v3/prices_for_dates
 
 ECPay ──POST /ecpay-return──▶ flight-ecpay-return   (1st charge → active)          ─┐
@@ -28,7 +29,7 @@ API base URL: `https://z3i3apvemd.execute-api.us-east-1.amazonaws.com` (HTTP API
 
 ## Authentication
 
-`POST /subscribe`, `GET /subscriptions`, `DELETE /subscriptions`, `POST /cancel` and `GET /fares` require
+`POST /subscribe`, `GET /subscriptions`, `DELETE /subscriptions`, `POST /cancel`, `GET|PUT /settings` and `GET /fares` require
 `Authorization: Bearer <Supabase access token>`.
 Each function calls Supabase `GET /auth/v1/user` with that token (and the publishable key from
 `flight/supabase`) and uses the email Supabase returns; any email sent by the client is ignored.
@@ -38,6 +39,17 @@ and this Supabase project signs with ES256.)
 
 The ECPay routes (`/ecpay-return`, `/ecpay-period`, `/ecpay-result`) take no token: ECPay calls them.
 The two callbacks trust a request only after its CheckMacValue verifies against `flight/ecpay`.
+
+## Billing switch (site setting)
+
+`s3://flight-config-656923393380/settings/site.json` = `{"billing_enabled": true|false, "updated_at", "updated_by"}`,
+read through `common/settings.py` (30 s cache per container; missing/unreadable file ⇒ billing **on**).
+Admins (env `ADMIN_EMAILS` on `flight-settings`) flip it from the dashboard; `PUT /settings` returns 403 for anyone else.
+
+- **On** (default): the M2 paywall below.
+- **Off**: `POST /subscribe` saves unpaid rows as `subscription_status = "free"` and returns JSON (no checkout);
+  `flight-parser` alerts every subscriber whose target is met. Paying rows are untouched: ECPay keeps charging
+  them and they can still cancel. Turning billing back on makes `free` rows unpaid again (完成付款 on the site).
 
 ## Subscription lifecycle (M2)
 
@@ -77,6 +89,7 @@ pending_payment ──(first charge, /ecpay-return)──▶ active ⇄ target u
 | `lambdas/flight-ecpay-period` (+ `common/ecpay.py`) | Plain Lambda, code from S3 | `POST /ecpay-period` | Extends `current_period_end`; `expired` after 6 failures |
 | `lambdas/flight-ecpay-result` | Plain Lambda, code from S3 | `ANY /ecpay-result` | Env `SITE_URL`; 302 only, never activates |
 | `lambdas/flight-status-notification` | Plain Lambda, code from S3 | SQS `flight-status-queue` (batch item failures) | Env `SITE_URL`; `event_type` welcome/cancel; sends once per order |
+| `lambdas/flight-settings` (+ `common/auth.py`, `common/settings.py`) | Plain Lambda, code from S3 | `GET /settings`, `PUT /settings` | Env `ADMIN_EMAILS`, `CONFIG_BUCKET` |
 | `lambdas/flight-search-fares` | Plain Lambda, code from `s3://…/lambda/search.zip` | `GET /fares?plan_name=&date_from=&date_to=&time_from=&time_to=[&trip_min=&trip_max=&ret_time_from=&ret_time_to=]` | Top 10 round-trip fares (TWD) departing in the date range and local-time window; optional nights-away range (local calendar dates) and return departure window; ≤ 92 days; data is Travelpayouts' 48-hour search cache |
 | `lambdas/flight-parser-wrapper` | CFN stack `flight-parser-wrapper` (inline) | EventBridge rule `flight-price-check` | Env `CONFIG_BUCKET` |
 | `lambdas/flight-parser` | CFN stack `flight-parser`, code from S3 | Invoked by the wrapper | Env `QUEUE_URL`, `CONFIG_BUCKET`; checks **next month**, round trip; serves `active` and `cancelled` rows still inside their period, flips lapsed `cancelled` rows to `expired` |
