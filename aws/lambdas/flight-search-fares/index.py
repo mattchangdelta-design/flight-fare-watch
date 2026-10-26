@@ -88,6 +88,17 @@ def handler(e, c):
         return resp(400, {"error": "date_from/date_to must be YYYY-MM-DD, time_from/time_to HH:MM"})
     if d2 < d1 or (d2 - d1).days > MAX_DAYS:
         return resp(400, {"error": f"date range must be 1-{MAX_DAYS} days"})
+    # Optional return-leg filters: trip length in days (by local calendar date) and return departure window.
+    try:
+        n1 = int(q["trip_min"]) if q.get("trip_min") else None
+        n2 = int(q["trip_max"]) if q.get("trip_max") else None
+        rt1 = hhmm(q["ret_time_from"]) if q.get("ret_time_from") else None
+        rt2 = hhmm(q["ret_time_to"]) if q.get("ret_time_to") else None
+    except Exception:
+        return resp(400, {"error": "trip_min/trip_max must be whole days, ret_time_from/ret_time_to HH:MM"})
+    if (n1 is not None and n1 < 0) or (n1 is not None and n2 is not None and n2 < n1):
+        return resp(400, {"error": "trip length range is invalid"})
+    need_return = any(v is not None for v in (n1, n2, rt1, rt2))
     o, d = PLANS[plan]
     rows, errors = [], 0
     for m in months(d1, d2):
@@ -105,6 +116,17 @@ def handler(e, c):
         mins = dt.hour * 60 + dt.minute
         if not (d1 <= dt.date() <= d2 and t1 <= mins <= t2):
             continue
+        ret = r.get("return_at")
+        if need_return:
+            if not ret:
+                continue
+            rdt = datetime.datetime.fromisoformat(ret)
+            days = (rdt.date() - dt.date()).days
+            rmins = rdt.hour * 60 + rdt.minute
+            if (n1 is not None and days < n1) or (n2 is not None and days > n2):
+                continue
+            if (rt1 is not None and rmins < rt1) or (rt2 is not None and rmins > rt2):
+                continue
         key = (dep, r.get("return_at"), r.get("airline"), r.get("flight_number"))
         if key in seen:
             continue
@@ -117,6 +139,7 @@ def handler(e, c):
             "link": ("https://www.aviasales.com" + r["link"]) if r.get("link") else None})
         if len(out) == 10:
             break
-    print("search", plan, d1, d2, q.get("time_from"), q.get("time_to"), "raw", len(rows), "matched", len(out))
+    print("search", plan, d1, d2, q.get("time_from"), q.get("time_to"), "trip", n1, n2,
+          "ret", q.get("ret_time_from"), q.get("ret_time_to"), "raw", len(rows), "matched", len(out))
     return resp(200, {"plan_name": plan, "currency": "TWD", "scanned": len(rows), "results": out,
                       "partial": errors > 0})

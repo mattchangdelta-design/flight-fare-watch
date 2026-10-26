@@ -9,6 +9,7 @@ import { PLANS, searchFares, type Fare, type PlanName } from "@/lib/flight-api";
 
 const WEEK = "日一二三四五六";
 const HOURS = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, "0")}:00`);
+const TRIP_DAYS = Array.from({ length: 14 }, (_, i) => String(i + 1));
 const selectClass =
   "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring md:text-sm";
 
@@ -107,6 +108,10 @@ export function FareSearch({ onPick }: { onPick: (plan: PlanName, price: number)
   const [dateTo, setDateTo] = useState(range.to);
   const [timeFrom, setTimeFrom] = useState("00:00");
   const [timeTo, setTimeTo] = useState("23:59");
+  const [tripMin, setTripMin] = useState("");
+  const [tripMax, setTripMax] = useState("");
+  const [retFrom, setRetFrom] = useState("");
+  const [retTo, setRetTo] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
 
   const search = useMutation({
@@ -120,12 +125,20 @@ export function FareSearch({ onPick }: { onPick: (plan: PlanName, price: number)
     if ((Date.parse(dateTo) - Date.parse(dateFrom)) / 86400000 > 92)
       return setFormError("日期區間最多 3 個月");
     if (timeTo < timeFrom) return setFormError("出發時段的結束時間要晚於開始時間");
+    if (tripMin && tripMax && Number(tripMax) < Number(tripMin))
+      return setFormError("停留晚數的上限要大於或等於下限");
+    if (retFrom && retTo && retTo < retFrom)
+      return setFormError("回程時段的結束時間要晚於開始時間");
     search.mutate({
       plan_name: plan,
       date_from: dateFrom,
       date_to: dateTo,
       time_from: timeFrom,
       time_to: timeTo,
+      trip_min: tripMin,
+      trip_max: tripMax,
+      ret_time_from: retFrom,
+      ret_time_to: retTo,
     });
   }
 
@@ -136,7 +149,7 @@ export function FareSearch({ onPick }: { onPick: (plan: PlanName, price: number)
     <section className="mt-8 rounded-2xl border border-border bg-card p-6">
       <h2 className="text-lg font-semibold">查詢目前票價</h2>
       <p className="mt-1 text-sm text-muted-foreground">
-        先看看指定日期和出發時段的最低來回票價，再決定目標價。
+        先看看指定日期、出發時段和行程天數的最低來回票價，再決定目標價。
       </p>
 
       <form onSubmit={submit} className="mt-5 grid gap-4 sm:grid-cols-2">
@@ -205,6 +218,74 @@ export function FareSearch({ onPick }: { onPick: (plan: PlanName, price: number)
             ))}
           </select>
         </div>
+        <div className="sm:col-span-2 pt-2">
+          <p className="text-sm font-medium">回程條件（選填）</p>
+          <p className="text-xs text-muted-foreground">不填就不限制。條件越多，符合的票越少。</p>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="fs-nmin">停留晚數（最少）</Label>
+          <select
+            id="fs-nmin"
+            className={selectClass}
+            value={tripMin}
+            onChange={(e) => setTripMin(e.target.value)}
+          >
+            <option value="">不限</option>
+            {TRIP_DAYS.map((n) => (
+              <option key={n} value={n}>
+                {n} 晚（{Number(n) + 1} 天）
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="fs-nmax">停留晚數（最多）</Label>
+          <select
+            id="fs-nmax"
+            className={selectClass}
+            value={tripMax}
+            onChange={(e) => setTripMax(e.target.value)}
+          >
+            <option value="">不限</option>
+            {TRIP_DAYS.map((n) => (
+              <option key={n} value={n}>
+                {n} 晚（{Number(n) + 1} 天）
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="fs-rfrom">回程出發時段（從）</Label>
+          <select
+            id="fs-rfrom"
+            className={selectClass}
+            value={retFrom}
+            onChange={(e) => setRetFrom(e.target.value)}
+          >
+            <option value="">不限</option>
+            {HOURS.map((h) => (
+              <option key={h} value={h}>
+                {h}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="fs-rto">回程出發時段（到）</Label>
+          <select
+            id="fs-rto"
+            className={selectClass}
+            value={retTo}
+            onChange={(e) => setRetTo(e.target.value)}
+          >
+            <option value="">不限</option>
+            {[...HOURS.slice(1), "23:59"].map((h) => (
+              <option key={h} value={h}>
+                {h === "23:59" ? "24:00" : h}
+              </option>
+            ))}
+          </select>
+        </div>
         <div className="sm:col-span-2">
           {formError && <p className="mb-2 text-sm text-destructive">{formError}</p>}
           <Button type="submit" className="w-full" disabled={search.isPending}>
@@ -222,7 +303,7 @@ export function FareSearch({ onPick }: { onPick: (plan: PlanName, price: number)
         <div className="mt-6">
           {results.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              這個日期和時段目前沒有票價資料。可以放寬時段或日期再試一次。
+              這個條件目前沒有票價資料。可以放寬日期、時段或回程條件再試一次。
             </p>
           ) : (
             <>
@@ -245,8 +326,9 @@ export function FareSearch({ onPick }: { onPick: (plan: PlanName, price: number)
           )}
           <p className="mt-4 text-xs text-muted-foreground">
             票價是 Travelpayouts 彙整近 48
-            小時其他旅客搜尋到的快取資料，不是即時報價，實際價格以訂購頁面為準。時間為各機場當地時間。
-            降價通知目前比對的是「下個月整個月、任何時段」的最低價，不會套用這裡的日期與時段條件。
+            小時其他旅客搜尋到的快取資料，不是即時報價，實際價格以訂購頁面為準。時間為各機場當地時間；停留晚數以去程與回程的當地日期計算（例如
+            11/3 去、11/7 回是 4 晚，即 5 天 4 夜）。
+            降價通知目前比對的是「下個月整個月、任何時段、任何天數」的最低價，不會套用這裡的查詢條件。
           </p>
         </div>
       )}

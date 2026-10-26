@@ -153,12 +153,19 @@ export type FareSearch = {
   date_to: string;
   time_from: string;
   time_to: string;
+  // Optional return-leg filters ("" = no limit).
+  trip_min?: string;
+  trip_max?: string;
+  ret_time_from?: string;
+  ret_time_to?: string;
 };
 
 export async function searchFares(
   params: FareSearch,
 ): Promise<{ results: Fare[]; scanned: number; partial: boolean }> {
-  const q = new URLSearchParams(params);
+  const q = new URLSearchParams(
+    Object.entries(params).filter((kv): kv is [string, string] => Boolean(kv[1])),
+  );
   const res = await fetch(`${FLIGHT_API_URL}/fares?${q.toString()}`, {
     headers: await authHeaders(),
   });
