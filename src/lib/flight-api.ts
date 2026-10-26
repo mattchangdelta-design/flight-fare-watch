@@ -1,3 +1,5 @@
+import { supabase } from "@/integrations/supabase/client";
+
 // Client for the M1 subscription API (AWS API Gateway → Lambda → DynamoDB).
 // The browser holds no AWS credentials; it only calls these public endpoints.
 export const FLIGHT_API_URL =
@@ -40,30 +42,41 @@ export type Subscription = {
 
 async function readJson(res: Response) {
   const body = await res.json().catch(() => ({}));
+  if (res.status === 401) throw new Error("登入已過期，請重新登入");
   if (!res.ok) throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
   return body;
 }
 
-export async function listSubscriptions(email: string): Promise<Subscription[]> {
-  const res = await fetch(`${FLIGHT_API_URL}/subscriptions?email=${encodeURIComponent(email)}`);
+// The API identifies the user from the Supabase access token, never from an email we send.
+async function authHeaders(): Promise<Record<string, string>> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("請先登入");
+  return { authorization: `Bearer ${token}` };
+}
+
+export async function listSubscriptions(): Promise<Subscription[]> {
+  const res = await fetch(`${FLIGHT_API_URL}/subscriptions`, { headers: await authHeaders() });
   const body = (await readJson(res)) as { subscriptions?: Subscription[] };
   return body.subscriptions ?? [];
 }
 
-export async function deleteSubscription(email: string, plan_name: PlanName): Promise<void> {
-  const q = new URLSearchParams({ email, plan_name });
-  const res = await fetch(`${FLIGHT_API_URL}/subscriptions?${q.toString()}`, { method: "DELETE" });
+export async function deleteSubscription(plan_name: PlanName): Promise<void> {
+  const q = new URLSearchParams({ plan_name });
+  const res = await fetch(`${FLIGHT_API_URL}/subscriptions?${q.toString()}`, {
+    method: "DELETE",
+    headers: await authHeaders(),
+  });
   await readJson(res);
 }
 
 export async function saveSubscription(input: {
-  email: string;
   plan_name: PlanName;
   target_price: number;
 }): Promise<Subscription> {
   const res = await fetch(`${FLIGHT_API_URL}/subscribe`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...(await authHeaders()) },
     body: JSON.stringify(input),
   });
   return (await readJson(res)) as Subscription;

@@ -32,7 +32,7 @@ function PlanCard({
 
   const mutation = useMutation({
     mutationFn: (target: number) =>
-      saveSubscription({ email, plan_name: plan.name, target_price: target }),
+      saveSubscription({ plan_name: plan.name, target_price: target }),
     onSuccess: async () => {
       setEditing(false);
       setError(null);
@@ -43,7 +43,7 @@ function PlanCard({
 
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const removal = useMutation({
-    mutationFn: () => deleteSubscription(email, plan.name),
+    mutationFn: () => deleteSubscription(plan.name),
     onSuccess: async () => {
       setConfirmingDelete(false);
       setError(null);
@@ -163,7 +163,7 @@ function PlanCard({
 export function PlanCards({ email }: { email: string }) {
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["subscriptions", email],
-    queryFn: () => listSubscriptions(email),
+    queryFn: () => listSubscriptions(),
   });
 
   if (isLoading) return <p className="mt-8 text-muted-foreground">載入訂閱中…</p>;
