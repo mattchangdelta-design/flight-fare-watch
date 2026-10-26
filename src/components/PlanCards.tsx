@@ -6,6 +6,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RoutePicker, type RouteValue } from "@/components/RoutePicker";
+import { ConditionFields } from "@/components/ConditionFields";
+import { MatchPreview } from "@/components/MatchPreview";
+import {
+  compact,
+  defaultConditions,
+  fromStored,
+  summary,
+  todayYmd,
+  validate,
+  type Conditions,
+} from "@/lib/conditions";
 import {
   MAX_ROUTES,
   MONTHLY_FEE_TWD,
@@ -24,9 +35,9 @@ import {
 } from "@/lib/flight-api";
 
 /** A route + target price picked from the fare search; `nonce` makes repeat picks re-apply. */
-export type Prefill = { route: RouteInfo; price: number; nonce: number };
+export type Prefill = { route: RouteInfo; price: number; conditions: Conditions; nonce: number };
 
-const HINT = "比對的是下個月出發的最低來回票價";
+const HINT = "依下面的條件，找到最便宜的來回票低於目標價時就寄信通知你";
 
 const fmt = (n: number) => `NT$${n.toLocaleString("en-US")}`;
 const fee = `${fmt(MONTHLY_FEE_TWD)} / 月`;
@@ -58,6 +69,7 @@ function PlanCard({
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(sub ? String(sub.target_price) : "");
+  const [cond, setCond] = useState<Conditions>(() => fromStored(sub?.conditions));
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<"cancel" | "delete" | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -71,6 +83,7 @@ function PlanCard({
   useEffect(() => {
     if (!prefill || prefill.route.route !== info.route || prefill.nonce < mountedAt.current) return;
     setValue(String(prefill.price));
+    setCond(prefill.conditions);
     setEditing(true);
     setError(null);
     cardRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -79,7 +92,8 @@ function PlanCard({
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["subscriptions", email] });
 
   const save = useMutation({
-    mutationFn: (target: number) => saveSubscription({ route: info.route, target_price: target }),
+    mutationFn: (target: number) =>
+      saveSubscription({ route: info.route, target_price: target, conditions: compact(cond) }),
     onSuccess: async (res) => {
       if (res.kind === "checkout") {
         goToCheckout(res.html);
@@ -122,11 +136,14 @@ function PlanCard({
       setError("請輸入大於 0 的新台幣金額");
       return;
     }
+    const err = validate(cond, { future: true });
+    if (err) return setError(err);
     save.mutate(Math.round(n));
   }
 
   function startEdit() {
     setValue(String(sub?.target_price ?? ""));
+    setCond(fromStored(sub?.conditions));
     setEditing(true);
     setConfirming(null);
     setError(null);
@@ -135,6 +152,9 @@ function PlanCard({
   const showForm = !sub || editing;
   const inputId = `target-${info.route}`;
   const until = sub?.current_period_end_date;
+  const stored = sub?.conditions?.["date_from"] ? (sub.conditions as Partial<Conditions>) : null;
+  // The tracked dates are all in the past: no fare can match any more.
+  const rangeOver = Boolean(stored?.date_to && stored.date_to < todayYmd());
 
   return (
     <div ref={cardRef} className="rounded-2xl border border-border bg-card p-6">
@@ -145,7 +165,7 @@ function PlanCard({
           </div>
           <div>
             <h2 className="text-lg font-semibold">{routeLabel(info)}</h2>
-            <p className="text-xs text-muted-foreground">{info.route} · 下個月出發 · 來回</p>
+            <p className="text-xs text-muted-foreground">{info.route} · 來回</p>
           </div>
         </div>
         {status && <Badge variant={BADGE[status].variant}>{BADGE[status].label}</Badge>}
@@ -155,6 +175,16 @@ function PlanCard({
         <div className="mt-6">
           <p className="text-sm text-muted-foreground">目前目標價</p>
           <p className="text-2xl font-bold">{fmt(sub.target_price)}</p>
+          <p className="mt-1 text-sm">
+            <span className="text-muted-foreground">條件：</span>
+            {stored ? summary(stored) : "下個月任何時間（尚未設定條件）"}
+          </p>
+          {rangeOver && (
+            <p className="mt-2 rounded-lg border border-amber-500/50 p-2 text-sm text-amber-500">
+              追蹤期間已過，不會再收到通知。請按「更新目標價與條件」設定新的日期
+              {status === "active" ? "；月費仍會照常扣款，不需要的話請取消續訂" : ""}。
+            </p>
+          )}
 
           {status === "active" && until && (
             <p className="mt-2 text-sm text-muted-foreground">
@@ -243,7 +273,7 @@ function PlanCard({
                 disabled={busy}
                 onClick={startEdit}
               >
-                更新目標價
+                更新目標價與條件
               </Button>
               {status === "active" && (
                 <Button variant="ghost" disabled={busy} onClick={() => setConfirming("cancel")}>
@@ -275,6 +305,10 @@ function PlanCard({
             onChange={(e) => setValue(e.target.value)}
           />
           <p className="text-xs text-muted-foreground">{HINT}</p>
+          <div className="grid gap-4 pt-2 sm:grid-cols-2">
+            <ConditionFields value={cond} onChange={setCond} idPrefix={`c-${info.route}`} />
+          </div>
+          <MatchPreview route={info.route} conditions={cond} target={Number(value) || undefined} />
           {needsCheckout && (
             <p className="text-xs text-muted-foreground">
               送出後前往綠界以信用卡付款，月費 {fee}，每月自動扣款，可隨時取消續訂。
@@ -322,24 +356,29 @@ function AddRouteCard({
   const queryClient = useQueryClient();
   const [route, setRoute] = useState<RouteValue>({ origin: ORIGINS[0]!, destination: null });
   const [value, setValue] = useState("");
+  const [cond, setCond] = useState<Conditions>(defaultConditions);
+  const applied = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!prefill || tracked.has(prefill.route.route)) return;
+    // Apply each pick once (the parent re-renders often and `tracked` is rebuilt every time).
+    if (!prefill || prefill.nonce === applied.current || tracked.has(prefill.route.route)) return;
+    applied.current = prefill.nonce;
     const [o, d = ""] = prefill.route.route.split("-");
     setRoute({
       origin: ORIGINS.find((x) => x.code === o) ?? ORIGINS[0]!,
       destination: { code: d, name: prefill.route.destinationName },
     });
     setValue(String(prefill.price));
+    setCond(prefill.conditions);
     setError(null);
     cardRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [prefill, tracked]);
 
   const save = useMutation({
     mutationFn: (v: { route: string; target: number }) =>
-      saveSubscription({ route: v.route, target_price: v.target }),
+      saveSubscription({ route: v.route, target_price: v.target, conditions: compact(cond) }),
     onSuccess: async (res) => {
       if (res.kind === "checkout") {
         goToCheckout(res.html);
@@ -347,6 +386,7 @@ function AddRouteCard({
       }
       setRoute({ origin: ORIGINS[0]!, destination: null });
       setValue("");
+      setCond(defaultConditions());
       setError(null);
       await queryClient.invalidateQueries({ queryKey: ["subscriptions", email] });
     },
@@ -360,6 +400,8 @@ function AddRouteCard({
     if (tracked.has(code)) return setError("這條航線已經在追蹤了，可以直接更新它的目標價");
     const n = Number(value);
     if (!Number.isFinite(n) || n <= 0) return setError("請輸入大於 0 的新台幣金額");
+    const err = validate(cond, { future: true });
+    if (err) return setError(err);
     save.mutate({ route: code, target: Math.round(n) });
   }
 
@@ -395,6 +437,14 @@ function AddRouteCard({
             onChange={(e) => setValue(e.target.value)}
           />
           <p className="text-xs text-muted-foreground">{HINT}</p>
+          <div className="grid gap-4 pt-2 sm:grid-cols-2">
+            <ConditionFields value={cond} onChange={setCond} idPrefix="new" />
+          </div>
+          <MatchPreview
+            route={route.destination ? `${route.origin.code}-${route.destination.code}` : null}
+            conditions={cond}
+            target={Number(value) || undefined}
+          />
           {billing && (
             <p className="text-xs text-muted-foreground">
               送出後前往綠界以信用卡付款，每條航線月費 {fee}，每月自動扣款，可隨時取消續訂。

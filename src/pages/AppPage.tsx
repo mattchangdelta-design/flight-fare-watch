@@ -101,7 +101,9 @@ export function AppPage() {
               </div>
             )}
             <FareSearch
-              onPick={(route, price) => setPrefill({ route, price, nonce: Date.now() })}
+              onPick={(route, price, conditions) =>
+                setPrefill({ route, price, conditions, nonce: Date.now() })
+              }
             />
             <h2 className="mt-10 text-lg font-semibold">我的追蹤</h2>
             {settings.isPending ? (

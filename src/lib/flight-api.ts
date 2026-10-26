@@ -68,6 +68,8 @@ export type Subscription = {
   destination?: string;
   origin_name?: string;
   destination_name?: string;
+  /** Tracking conditions (strings, unset keys = no limit). Missing = next month, any time. */
+  conditions?: Partial<Record<string, string>>;
   target_price: number;
   currency: "TWD";
   created_at?: string;
@@ -164,6 +166,7 @@ export type SaveResult =
 export async function saveSubscription(input: {
   route: RouteCode;
   target_price: number;
+  conditions?: Partial<Record<string, string>>;
 }): Promise<SaveResult> {
   const res = await fetch(`${FLIGHT_API_URL}/subscribe`, {
     method: "POST",

@@ -2,8 +2,6 @@ import { useState, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { ExternalLink, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { airlineName } from "@/lib/airlines";
 import {
   ORIGINS,
@@ -15,22 +13,11 @@ import {
   type FunnelStage,
   type RouteInfo,
 } from "@/lib/flight-api";
-import { RoutePicker, selectClass, type RouteValue } from "@/components/RoutePicker";
+import { RoutePicker, type RouteValue } from "@/components/RoutePicker";
+import { ConditionFields } from "@/components/ConditionFields";
+import { defaultConditions, fromStored, validate, type Conditions } from "@/lib/conditions";
 
 const WEEK = "日一二三四五六";
-const HOURS = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, "0")}:00`);
-const TRIP_DAYS = Array.from({ length: 14 }, (_, i) => String(i + 1));
-
-const pad = (n: number) => String(n).padStart(2, "0");
-const ymd = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-
-function nextMonthRange() {
-  const now = new Date();
-  return {
-    from: ymd(new Date(now.getFullYear(), now.getMonth() + 1, 1)),
-    to: ymd(new Date(now.getFullYear(), now.getMonth() + 2, 0)),
-  };
-}
 
 /** '2026-11-03T06:50:00+08:00' -> '11/3（二）06:50', in the timestamp's own (local) offset. */
 function when(iso: string | null) {
@@ -162,20 +149,16 @@ function FareRow({
   );
 }
 
-export function FareSearch({ onPick }: { onPick: (route: RouteInfo, price: number) => void }) {
-  const range = nextMonthRange();
+export function FareSearch({
+  onPick,
+}: {
+  onPick: (route: RouteInfo, price: number, conditions: Conditions) => void;
+}) {
   const [route, setRoute] = useState<RouteValue>({
     origin: ORIGINS[0]!,
     destination: { code: "TYO", name: "東京" },
   });
-  const [dateFrom, setDateFrom] = useState(range.from);
-  const [dateTo, setDateTo] = useState(range.to);
-  const [timeFrom, setTimeFrom] = useState("00:00");
-  const [timeTo, setTimeTo] = useState("23:59");
-  const [tripMin, setTripMin] = useState("");
-  const [tripMax, setTripMax] = useState("");
-  const [retFrom, setRetFrom] = useState("");
-  const [retTo, setRetTo] = useState("");
+  const [cond, setCond] = useState<Conditions>(defaultConditions);
   const [formError, setFormError] = useState<string | null>(null);
 
   const search = useMutation({
@@ -186,162 +169,30 @@ export function FareSearch({ onPick }: { onPick: (route: RouteInfo, price: numbe
     e.preventDefault();
     setFormError(null);
     if (!route.destination) return setFormError("請從清單選擇目的地");
-    if (dateTo < dateFrom) return setFormError("結束日期要在開始日期之後");
-    if ((Date.parse(dateTo) - Date.parse(dateFrom)) / 86400000 > 92)
-      return setFormError("日期區間最多 3 個月");
-    if (timeTo < timeFrom) return setFormError("出發時段的結束時間要晚於開始時間");
-    if (tripMin && tripMax && Number(tripMax) < Number(tripMin))
-      return setFormError("停留晚數的上限要大於或等於下限");
-    if (retFrom && retTo && retTo < retFrom)
-      return setFormError("回程時段的結束時間要晚於開始時間");
-    search.mutate({
-      route: `${route.origin.code}-${route.destination.code}`,
-      date_from: dateFrom,
-      date_to: dateTo,
-      time_from: timeFrom,
-      time_to: timeTo,
-      trip_min: tripMin,
-      trip_max: tripMax,
-      ret_time_from: retFrom,
-      ret_time_to: retTo,
-    });
+    const err = validate(cond);
+    if (err) return setFormError(err);
+    search.mutate({ route: `${route.origin.code}-${route.destination.code}`, ...cond });
   }
 
   const results = search.data?.results ?? [];
-  // The route the shown results belong to (the picker may have changed since).
+  // The route + conditions the shown results belong to (the form may have changed since).
   const searched = search.variables
     ? routeInfo(search.variables.route, search.data?.origin_name, search.data?.destination_name)
     : null;
+  const searchedCond = search.variables ? fromStored(search.variables) : cond;
 
   return (
     <section className="mt-8 rounded-2xl border border-border bg-card p-6">
       <h2 className="text-lg font-semibold">查詢目前票價</h2>
       <p className="mt-1 text-sm text-muted-foreground">
-        先看看指定日期、出發時段和行程天數的最低來回票價，再決定目標價。
+        先看看指定日期、出發時段和行程天數的最低來回票價，再決定目標價。按「設為目標價」會連同這些條件一起帶到追蹤。
       </p>
 
       <form onSubmit={submit} className="mt-5 grid gap-4 sm:grid-cols-2">
         <div className="sm:col-span-2">
           <RoutePicker value={route} onChange={setRoute} />
         </div>
-        <div className="space-y-2">
-          <Label htmlFor="fs-from">出發日期（從）</Label>
-          <Input
-            id="fs-from"
-            type="date"
-            required
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="fs-to">出發日期（到）</Label>
-          <Input
-            id="fs-to"
-            type="date"
-            required
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="fs-tfrom">出發時段（從）</Label>
-          <select
-            id="fs-tfrom"
-            className={selectClass}
-            value={timeFrom}
-            onChange={(e) => setTimeFrom(e.target.value)}
-          >
-            {HOURS.map((h) => (
-              <option key={h} value={h}>
-                {h}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="fs-tto">出發時段（到）</Label>
-          <select
-            id="fs-tto"
-            className={selectClass}
-            value={timeTo}
-            onChange={(e) => setTimeTo(e.target.value)}
-          >
-            {[...HOURS.slice(1), "23:59"].map((h) => (
-              <option key={h} value={h}>
-                {h === "23:59" ? "24:00" : h}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="sm:col-span-2 pt-2">
-          <p className="text-sm font-medium">回程條件（選填）</p>
-          <p className="text-xs text-muted-foreground">不填就不限制。條件越多，符合的票越少。</p>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="fs-nmin">停留晚數（最少）</Label>
-          <select
-            id="fs-nmin"
-            className={selectClass}
-            value={tripMin}
-            onChange={(e) => setTripMin(e.target.value)}
-          >
-            <option value="">不限</option>
-            {TRIP_DAYS.map((n) => (
-              <option key={n} value={n}>
-                {n} 晚（{Number(n) + 1} 天）
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="fs-nmax">停留晚數（最多）</Label>
-          <select
-            id="fs-nmax"
-            className={selectClass}
-            value={tripMax}
-            onChange={(e) => setTripMax(e.target.value)}
-          >
-            <option value="">不限</option>
-            {TRIP_DAYS.map((n) => (
-              <option key={n} value={n}>
-                {n} 晚（{Number(n) + 1} 天）
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="fs-rfrom">回程出發時段（從）</Label>
-          <select
-            id="fs-rfrom"
-            className={selectClass}
-            value={retFrom}
-            onChange={(e) => setRetFrom(e.target.value)}
-          >
-            <option value="">不限</option>
-            {HOURS.map((h) => (
-              <option key={h} value={h}>
-                {h}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="fs-rto">回程出發時段（到）</Label>
-          <select
-            id="fs-rto"
-            className={selectClass}
-            value={retTo}
-            onChange={(e) => setRetTo(e.target.value)}
-          >
-            <option value="">不限</option>
-            {[...HOURS.slice(1), "23:59"].map((h) => (
-              <option key={h} value={h}>
-                {h === "23:59" ? "24:00" : h}
-              </option>
-            ))}
-          </select>
-        </div>
+        <ConditionFields value={cond} onChange={setCond} idPrefix="fs" />
         <div className="sm:col-span-2">
           {formError && <p className="mb-2 text-sm text-destructive">{formError}</p>}
           <Button type="submit" className="w-full" disabled={search.isPending}>
@@ -379,7 +230,7 @@ export function FareSearch({ onPick }: { onPick: (route: RouteInfo, price: numbe
                     key={`${f.departure_at}-${f.return_at}-${f.flight_number}-${i}`}
                     fare={f}
                     rank={i + 1}
-                    onPick={(price) => searched && onPick(searched, price)}
+                    onPick={(price) => searched && onPick(searched, price, searchedCond)}
                   />
                 ))}
               </ol>
@@ -399,7 +250,7 @@ export function FareSearch({ onPick }: { onPick: (route: RouteInfo, price: numbe
                     key={`near-${f.departure_at}-${f.return_at}-${f.flight_number}-${i}`}
                     fare={f}
                     rank={i + 1}
-                    onPick={(price) => searched && onPick(searched, price)}
+                    onPick={(price) => searched && onPick(searched, price, searchedCond)}
                   />
                 ))}
               </ol>
@@ -409,7 +260,7 @@ export function FareSearch({ onPick }: { onPick: (route: RouteInfo, price: numbe
             票價是 Travelpayouts 彙整近 48
             小時其他旅客搜尋到的快取資料，不是即時報價，實際價格以訂購頁面為準。時間為各機場當地時間；停留晚數以去程與回程的當地日期計算（例如
             11/3 去、11/7 回是 4 晚，即 5 天 4 夜）。
-            降價通知目前比對的是「下個月整個月、任何時段、任何天數」的最低價，不會套用這裡的查詢條件。
+            追蹤時會用你設定的條件比對，所以通知的票跟這裡查到的一致。
           </p>
         </div>
       )}

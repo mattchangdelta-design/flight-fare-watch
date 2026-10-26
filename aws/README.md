@@ -21,7 +21,7 @@ flight-cancel-subscription ─────────────────�
 
 EventBridge flight-price-check (rate 30 min)
   └▶ flight-parser-wrapper ── distinct routes in DynamoDB subscriptions
-       └▶ flight-parser (one per route, async) ── serves only paying rows (see below)
+       └▶ flight-parser (one per route, async) ── each subscriber's conditions; paying rows only while billing is on
             └▶ SQS flight-fare-queue (one message per subscriber whose target is met)
                  └▶ flight-fare-notification ── dedup in DynamoDB notification_history ──▶ Resend email
 ```
@@ -51,6 +51,16 @@ popularity = route count, `d` = direct flight from Taiwan). Re-run `flight-place
 Rows store `origin_name`/`destination_name` for emails and the site. One person may track at most
 `MAX_ROUTES` (env on `flight-save-subscription`, default 2) routes; with billing on each route is its own
 monthly subscription. Less popular routes often have no Travelpayouts data at all.
+
+## Tracking conditions
+
+A subscription row may carry `conditions` (map of strings, same fields as `GET /fares`: `date_from`, `date_to`,
+`time_from`, `time_to`, optional `trip_min`/`trip_max` nights and `ret_time_from`/`ret_time_to`). `POST /subscribe`
+validates them with `common/fares.py` (range ≤ 92 days, not entirely in the past); omitting `conditions` keeps the
+stored ones. `flight-parser` fetches each needed month once per route and, per subscriber, takes the cheapest fare
+that passes `fares.check` - the same filter the site's 查詢 uses - ignoring days already past. Rows without
+conditions mean next month, any time. Once `date_to` has passed the row gets no alerts (billing is not stopped;
+the site asks the user to update the dates or cancel). Alert emails include a 你的條件 line.
 
 ## Billing switch (site setting)
 
