@@ -1,7 +1,7 @@
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PlanCards, type Prefill } from "@/components/PlanCards";
 import { FareSearch } from "@/components/FareSearch";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,33 @@ export function AppPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [prefill, setPrefill] = useState<Prefill | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  // Set by the ECPay return redirect (flight-ecpay-result): success | failed | unknown.
+  const [purchase] = useState(() => searchParams.get("purchase"));
+
+  useEffect(() => {
+    if (!searchParams.has("purchase")) return;
+    setSearchParams(
+      (p) => {
+        p.delete("purchase");
+        return p;
+      },
+      { replace: true },
+    );
+  }, [searchParams, setSearchParams]);
+
+  // ECPay's server-to-server result can land a few seconds after the browser returns,
+  // so re-read the subscriptions a few times before the badge settles on "已訂閱".
+  useEffect(() => {
+    if (purchase !== "success" || !user.email) return;
+    const timers = [3000, 8000, 15000, 30000].map((ms) =>
+      window.setTimeout(
+        () => queryClient.invalidateQueries({ queryKey: ["subscriptions", user.email] }),
+        ms,
+      ),
+    );
+    return () => timers.forEach((t) => window.clearTimeout(t));
+  }, [purchase, user.email, queryClient]);
 
   async function signOut() {
     await queryClient.cancelQueries();
@@ -40,6 +67,21 @@ export function AppPage() {
         </div>
       </header>
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-16 sm:px-6">
+        {purchase === "success" && (
+          <div className="mb-8 rounded-xl border border-border bg-accent p-4 text-sm">
+            付款完成，謝謝訂閱！訂閱狀態會在幾秒內更新為「已訂閱」，確認信也會寄到你的信箱。
+          </div>
+        )}
+        {purchase === "failed" && (
+          <div className="mb-8 rounded-xl border border-destructive p-4 text-sm text-destructive">
+            付款沒有完成，這次不會扣款。可以在下方按「完成付款」再試一次。
+          </div>
+        )}
+        {purchase === "unknown" && (
+          <div className="mb-8 rounded-xl border border-border p-4 text-sm">
+            已從綠界返回，訂閱狀態請以下方顯示為準。
+          </div>
+        )}
         <h1 className="text-3xl font-bold break-all">Hi {user.email}</h1>
         <p className="mt-2 text-muted-foreground">
           選一條航線、設定目標價，下個月的來回最低價一達標，我們就寄信通知你。
