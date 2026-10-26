@@ -17,6 +17,7 @@ from auth import auth_email, AuthDown
 import ecpay
 import settings
 import places
+import fares
 
 API = os.environ.get("API_BASE", "https://z3i3apvemd.execute-api.us-east-1.amazonaws.com").strip().rstrip("/")
 SITE = os.environ.get("SITE_URL", "https://flight-fare-watch.vercel.app").strip().rstrip("/")
@@ -65,6 +66,13 @@ def handler(e, c):
     o, dst, err = places.parse_route(d)
     if err:
         return resp(400, {"error": err})
+    cond = None
+    if d.get("conditions"):
+        cond, err = fares.parse_conditions(d["conditions"])
+        if err:
+            return resp(400, {"error": err})
+        if cond["date_to"] < fares.today_tw().isoformat():
+            return resp(400, {"error": "出發日期區間已經過了，請選擇今天以後的日期"})
     try:
         tp = Decimal(str(d.get("target_price")))
     except (InvalidOperation, TypeError):
@@ -80,6 +88,9 @@ def handler(e, c):
     base = {":o": o, ":d": dst, ":on": oname, ":dn": dname, ":t": tp, ":c": "TWD", ":n": now_s}
     sets = ("origin=:o, destination=:d, origin_name=:on, destination_name=:dn, target_price=:t, "
             "currency=:c, updated_at=:n")
+    if cond:  # stored as a map of strings; rows without it mean next month, any time
+        sets += ", conditions=:cd"
+        base[":cd"] = cond
 
     cur = T.get_item(Key=key).get("Item")
     if not cur:

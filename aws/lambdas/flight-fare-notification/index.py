@@ -66,6 +66,30 @@ def _when(iso):
         return _day(iso)
 
 
+def _md(iso_date):
+    return f"{int(iso_date[5:7])}/{int(iso_date[8:10])}"
+
+
+def conditions_text(c):
+    """'11/3–11/13 出發 · 去程 04:00–12:00 · 停留 2 晚以上 · 回程 12:00–18:00' (None if no conditions)."""
+    if not c or not c.get("date_from"):
+        return None
+    parts = [f"{_md(c['date_from'])}–{_md(c['date_to'])} 出發"]
+    if (c.get("time_from", "00:00"), c.get("time_to", "23:59")) != ("00:00", "23:59"):
+        parts.append(f"去程 {c.get('time_from', '00:00')}–{c.get('time_to', '23:59').replace('23:59', '24:00')}")
+    n1, n2 = c.get("trip_min"), c.get("trip_max")
+    if n1 and n2:
+        parts.append(f"停留 {n1} 晚" if n1 == n2 else f"停留 {n1}–{n2} 晚")
+    elif n1:
+        parts.append(f"停留 {n1} 晚以上")
+    elif n2:
+        parts.append(f"停留 {n2} 晚以內")
+    r1, r2 = c.get("ret_time_from"), c.get("ret_time_to")
+    if r1 or r2:
+        parts.append(f"回程 {r1 or '00:00'}–{(r2 or '24:00').replace('23:59', '24:00')}")
+    return " · ".join(parts)
+
+
 def details(fare):
     """Plain-text detail lines shared by the HTML and text renderers."""
     c = fare["cheapest"]
@@ -82,7 +106,8 @@ def details(fare):
         out_fn = " · 航班 " + (s if s[:1].isalpha() else f"{code} {s}".strip())
     on, dn = _names(fare)
     leg = lambda iso, nm: f"{_when(iso)} {nm}出發" if iso else "未提供"
-    return [f"航空公司：{' · '.join(parts)}",
+    cond = conditions_text(fare.get("conditions"))
+    return ([f"你的條件：{cond}"] if cond else []) + [f"航空公司：{' · '.join(parts)}",
             f"去程：{leg(c.get('depart_date'), on)}{out_fn if c.get('depart_date') else ''}",
             f"回程：{leg(c.get('return_date'), dn)}",
             "時間為出發地當地時間；抵達時間與機場請以訂購頁面為準。"]

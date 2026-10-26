@@ -1,56 +1,23 @@
-"""flight-parser: one route per invocation. Fetch next month's cheapest fare
-(TWD = gate, USD = best-effort) and enqueue every subscriber whose target is met."""
-import os, json, datetime, urllib.request, urllib.parse, urllib.error
+"""flight-parser: one route per invocation.
+
+For every subscriber of the route who should get alerts (paying, or anyone while billing is off),
+find the cheapest fare that matches *their* conditions (stored on the row; rows without conditions
+mean next month, any time) and enqueue an alert when it is at or below their target price.
+Fares come from Travelpayouts prices_for_dates, fetched once per month the subscribers need.
+Days already past are ignored; a subscription whose whole date range has passed gets no alerts.
+Uses common/fares.py - the same filter as the site's 查詢 - so both agree on what matches.
+Deployed from S3 together with common/settings.py, common/places.py and common/fares.py."""
+import os, json, datetime
 from decimal import Decimal
 import boto3
 from boto3.dynamodb.conditions import Attr
 import settings  # common/settings.py, zipped alongside
 import places  # common/places.py, zipped alongside
+import fares  # common/fares.py, zipped alongside
 
-UA = "Mozilla/5.0 (compatible; flight-notifier/1.0)"
-_sm = boto3.client("secretsmanager")
 _sqs = boto3.client("sqs")
 _table = boto3.resource("dynamodb").Table("subscriptions")
 QURL = os.environ["QUEUE_URL"]
-_token = None
-
-
-def token():
-    global _token
-    if _token is None:
-        _token = json.loads(_sm.get_secret_value(SecretId="flight/travelpayouts")["SecretString"])["token"]
-    return _token
-
-
-def next_month():
-    t = datetime.date.today().replace(day=1)
-    return (t + datetime.timedelta(days=32)).strftime("%Y-%m")
-
-
-def fetch_cheapest(origin, destination, month, tok, currency):
-    q = urllib.parse.urlencode({"origin": origin, "destination": destination,
-                                "depart_date": month, "currency": currency})
-    req = urllib.request.Request(f"https://api.travelpayouts.com/v1/prices/cheap?{q}",
-        headers={"User-Agent": UA, "Accept": "application/json", "X-Access-Token": tok})
-    try:
-        with urllib.request.urlopen(req, timeout=10) as r:
-            body = json.loads(r.read())
-    except urllib.error.HTTPError as ex:
-        print("travelpayouts HTTP", ex.code, currency, origin, destination)
-        return None
-    except Exception as ex:
-        print("travelpayouts error", type(ex).__name__, currency)
-        return None
-    if not body.get("success") or not body.get("data"):
-        return None
-    offers = body["data"].get(destination, {})
-    if not offers:
-        return None
-    # offers are keyed by number of transfers ("0" = direct)
-    k, best = min(offers.items(), key=lambda kv: kv[1]["price"])
-    return {"price": best["price"], "currency": currency.upper(), "airline": best.get("airline"),
-            "flight_number": best.get("flight_number"), "transfers": int(k) if str(k).isdigit() else None,
-            "depart_date": best.get("departure_at"), "return_date": best.get("return_at")}
 
 
 def subscribers(route):
@@ -83,36 +50,75 @@ def gate(it, now):
     return False
 
 
+def conditions_of(it, today):
+    """(conditions, effective start date) or (None, None) when the range is over."""
+    c = it.get("conditions")
+    cond = {k: str(v) for k, v in c.items()} if isinstance(c, dict) and c.get("date_from") else fares.legacy_conditions(today)
+    d1 = datetime.date.fromisoformat(cond["date_from"])
+    d2 = datetime.date.fromisoformat(cond["date_to"])
+    if d2 < today:
+        return None, None
+    return cond, max(d1, today)
+
+
+def message_fare(r):
+    """The `cheapest` block flight-fare-notification renders."""
+    return {"price": r.get("price"), "currency": "TWD", "airline": r.get("airline"),
+            "flight_number": r.get("flight_number"), "transfers": r.get("transfers"),
+            "return_transfers": r.get("return_transfers"),
+            "depart_date": r.get("departure_at"), "return_date": r.get("return_at"),
+            "origin_airport": r.get("origin_airport"), "destination_airport": r.get("destination_airport")}
+
+
 def handler(event, context):
     origin, destination = event["origin"], event["destination"]
     route = event.get("route") or f"{origin}-{destination}"
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    today = fares.today_tw()
     billing = settings.billing_enabled()
     # gate() always runs so lapsed cancelled rows still flip to expired; with billing off everyone is served.
     subs = [it for it in subscribers(route) if gate(it, now) or not billing]
     if not subs:
         print(route, "no paying subscribers - skipping" if billing else "no subscribers - skipping")
         return {"ok": True, "route": route, "matched": 0}
-    month = next_month()
-    tok = token()
-    tw = fetch_cheapest(origin, destination, month, tok, "twd")
-    if not tw:
-        print("no TWD fare for", route, month, "(empty/429) - skipping")
-        return {"ok": True, "route": route, "matched": 0}
-    print(route, month, "cheapest", json.dumps(tw), "served", len(subs), "billing", billing)
-    us = fetch_cheapest(origin, destination, month, tok, "usd")  # may be None - never block on it
-    matched = 0
+
+    plans, need = [], set()
     for it in subs:
+        cond, d_from = conditions_of(it, today)
+        if cond is None:
+            print("date range over - no alert", it["email"], route, it.get("conditions", {}).get("date_to"))
+            continue
+        plans.append((it, cond, d_from))
+        need.update(fares.months(d_from, datetime.date.fromisoformat(cond["date_to"])))
+    if not plans:
+        return {"ok": True, "route": route, "matched": 0}
+
+    rows, errors = [], 0
+    for m in sorted(need):
+        try:
+            rows += fares.fetch_month(origin, destination, m)
+        except Exception as ex:
+            errors += 1
+            print("travelpayouts error", m, type(ex).__name__, getattr(ex, "code", ""))
+    print(route, "months", sorted(need), "fares", len(rows), "subscribers", len(plans), "billing", billing)
+
+    matched = 0
+    for it, cond, d_from in plans:
+        hits, _, _, _ = fares.scan(rows, cond, d_from)
+        if not hits:
+            print("no matching fare", it["email"], route, json.dumps(cond))
+            continue
+        best = hits[0]
         tp = Decimal(str(it["target_price"]))
-        if tp < Decimal(str(tw["price"])):
+        print("best", it["email"], route, best.get("price"), "target", int(tp))
+        if tp < Decimal(str(best["price"])):
             continue
         body = {"email": it["email"], "route": route, "plan_name": it.get("plan_name"),
                 "origin_name": it.get("origin_name") or places.name(origin),
                 "destination_name": it.get("destination_name") or places.name(destination),
-                "target_price": int(tp), "cheapest": tw}
-        if us:
-            body["cheapest_usd"] = us
+                "target_price": int(tp), "cheapest": message_fare(best),
+                "conditions": cond if isinstance(it.get("conditions"), dict) else None}
         _sqs.send_message(QueueUrl=QURL, MessageBody=json.dumps(body))
         matched += 1
-    print(route, "matched", matched)
-    return {"ok": True, "route": route, "price": tw["price"], "matched": matched}
+    print(route, "matched", matched, "errors", errors)
+    return {"ok": True, "route": route, "matched": matched}
