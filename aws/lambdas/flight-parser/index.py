@@ -61,19 +61,44 @@ def subscribers(route):
         kw["ExclusiveStartKey"] = r["LastEvaluatedKey"]
 
 
+def gate(it, now):
+    """M2 paywall: serve active rows and cancelled rows still inside the paid period;
+    retire cancelled rows whose period has ended. pending_payment/expired/legacy are skipped."""
+    st = it.get("subscription_status")
+    if st == "active":
+        return True
+    if st == "cancelled":
+        if it.get("current_period_end", "") >= now:
+            return True
+        try:
+            _table.update_item(Key={"email": it["email"], "route": it["route"]},
+                UpdateExpression="SET subscription_status=:x, expired_at=:n",
+                ConditionExpression="subscription_status=:c AND current_period_end < :n",
+                ExpressionAttributeValues={":x": "expired", ":c": "cancelled", ":n": now})
+            print("expired (grace over)", it["email"], it["route"])
+        except _table.meta.client.exceptions.ConditionalCheckFailedException:
+            pass
+    return False
+
+
 def handler(event, context):
     origin, destination = event["origin"], event["destination"]
     route = event.get("route") or f"{origin}-{destination}"
+    now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    subs = [it for it in subscribers(route) if gate(it, now)]
+    if not subs:
+        print(route, "no paying subscribers - skipping")
+        return {"ok": True, "route": route, "matched": 0}
     month = next_month()
     tok = token()
     tw = fetch_cheapest(origin, destination, month, tok, "twd")
     if not tw:
         print("no TWD fare for", route, month, "(empty/429) - skipping")
         return {"ok": True, "route": route, "matched": 0}
-    print(route, month, "cheapest", json.dumps(tw))
+    print(route, month, "cheapest", json.dumps(tw), "paying", len(subs))
     us = fetch_cheapest(origin, destination, month, tok, "usd")  # may be None - never block on it
     matched = 0
-    for it in subscribers(route):
+    for it in subs:
         tp = Decimal(str(it["target_price"]))
         if tp < Decimal(str(tw["price"])):
             continue

@@ -49,5 +49,11 @@ def handler(e, c):
     plan = (e.get("queryStringParameters") or {}).get("plan_name")
     if plan not in PLANS:
         return resp(400, {"error": "plan_name must be tokyo or seoul"})
-    T.delete_item(Key={"email": email, "route": PLANS[plan]})
+    key = {"email": email, "route": PLANS[plan]}
+    it = T.get_item(Key=key).get("Item") or {}
+    st = it.get("subscription_status")
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    if st == "active" or (st == "cancelled" and it.get("current_period_end", "") >= now):
+        return resp(409, {"error": "付費中的訂閱請先取消訂閱"})
+    T.delete_item(Key=key)
     return resp(200, {"ok": True, "email": email, "route": PLANS[plan], "deleted": True})
