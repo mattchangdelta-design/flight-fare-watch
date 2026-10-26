@@ -108,39 +108,61 @@ def handler(e, c):
         except Exception as ex:
             errors += 1
             print("travelpayouts error", m, type(ex).__name__, getattr(ex, "code", ""))
-    seen, out = set(), []
+    # Check every fare against each active filter in order, so the site can show where results drop
+    # off (the funnel) and offer fares that miss exactly one condition (near misses).
+    stages = ["dates"] + (["dep_time"] if (t1, t2) != (0, 23 * 60 + 59) else []) \
+        + (["nights"] if (n1, n2) != (None, None) else []) + (["ret_time"] if (rt1, rt2) != (None, None) else [])
+    seen, matched, near = set(), [], []
+    funnel = {k: 0 for k in stages}
+    total = 0
     for r in sorted(rows, key=lambda x: x.get("price", 1e12)):
         dep = r.get("departure_at")
         if not dep:
             continue
-        dt = datetime.datetime.fromisoformat(dep)
-        mins = dt.hour * 60 + dt.minute
-        if not (d1 <= dt.date() <= d2 and t1 <= mins <= t2):
-            continue
-        ret = r.get("return_at")
-        if need_return:
-            if not ret:
-                continue
-            rdt = datetime.datetime.fromisoformat(ret)
-            days = (rdt.date() - dt.date()).days
-            rmins = rdt.hour * 60 + rdt.minute
-            if (n1 is not None and days < n1) or (n2 is not None and days > n2):
-                continue
-            if (rt1 is not None and rmins < rt1) or (rt2 is not None and rmins > rt2):
-                continue
         key = (dep, r.get("return_at"), r.get("airline"), r.get("flight_number"))
         if key in seen:
             continue
         seen.add(key)
-        out.append({"price": r.get("price"), "airline": r.get("airline"), "flight_number": r.get("flight_number"),
-            "origin_airport": r.get("origin_airport"), "destination_airport": r.get("destination_airport"),
-            "departure_at": dep, "arrival_at": arrive(dep, r.get("duration_to"), r.get("return_at")),
-            "return_at": r.get("return_at"), "return_arrival_at": arrive(r.get("return_at"), r.get("duration_back"), dep),
-            "transfers": r.get("transfers"), "return_transfers": r.get("return_transfers"),
-            "link": ("https://www.aviasales.com" + r["link"]) if r.get("link") else None})
-        if len(out) == 10:
-            break
+        total += 1
+        dt = datetime.datetime.fromisoformat(dep)
+        mins = dt.hour * 60 + dt.minute
+        ret = r.get("return_at")
+        rdt = datetime.datetime.fromisoformat(ret) if ret else None
+        ok = {"dates": d1 <= dt.date() <= d2, "dep_time": t1 <= mins <= t2}
+        if rdt:
+            days = (rdt.date() - dt.date()).days
+            rmins = rdt.hour * 60 + rdt.minute
+            ok["nights"] = not ((n1 is not None and days < n1) or (n2 is not None and days > n2))
+            ok["ret_time"] = not ((rt1 is not None and rmins < rt1) or (rt2 is not None and rmins > rt2))
+        else:
+            ok["nights"] = ok["ret_time"] = False
+        failed = [k for k in stages if not ok[k]]
+        for k in stages:  # cumulative: passes this stage and all earlier ones
+            if ok[k]:
+                funnel[k] += 1
+            else:
+                break
+        if not failed:
+            matched.append(r)
+        elif len(failed) == 1:
+            near.append((failed[0], r))
+
+    def fare(r, miss=None):
+        dep = r.get("departure_at")
+        f = {"price": r.get("price"), "airline": r.get("airline"), "flight_number": r.get("flight_number"),
+             "origin_airport": r.get("origin_airport"), "destination_airport": r.get("destination_airport"),
+             "departure_at": dep, "arrival_at": arrive(dep, r.get("duration_to"), r.get("return_at")),
+             "return_at": r.get("return_at"), "return_arrival_at": arrive(r.get("return_at"), r.get("duration_back"), dep),
+             "transfers": r.get("transfers"), "return_transfers": r.get("return_transfers"),
+             "link": ("https://www.aviasales.com" + r["link"]) if r.get("link") else None}
+        if miss:
+            f["miss"] = miss
+        return f
+
+    out = [fare(r) for r in matched[:10]]
+    near_out = [fare(r, k) for k, r in near[:5]] if len(out) < 5 else []
     print("search", route, d1, d2, q.get("time_from"), q.get("time_to"), "trip", n1, n2,
-          "ret", q.get("ret_time_from"), q.get("ret_time_to"), "raw", len(rows), "matched", len(out))
-    return resp(200, {"route": route, "origin_name": places.name(o), "destination_name": places.name(d), "currency": "TWD", "scanned": len(rows), "results": out,
-                      "partial": errors > 0})
+          "ret", q.get("ret_time_from"), q.get("ret_time_to"), "raw", len(rows), "unique", total, "funnel", funnel, "matched", len(out), "near", len(near_out))
+    return resp(200, {"route": route, "origin_name": places.name(o), "destination_name": places.name(d), "currency": "TWD", "scanned": total, "results": out,
+                      "funnel": [{"stage": "total", "count": total}] + [{"stage": k, "count": funnel[k]} for k in stages],
+                      "near": near_out, "months": months(d1, d2), "partial": errors > 0})

@@ -11,6 +11,8 @@ import {
   routeLabel,
   searchFares,
   type Fare,
+  type FareSearchResult,
+  type FunnelStage,
   type RouteInfo,
 } from "@/lib/flight-api";
 import { RoutePicker, selectClass, type RouteValue } from "@/components/RoutePicker";
@@ -46,6 +48,55 @@ const nextDay = (a: string | null, b: string | null) =>
   a && b && b.slice(0, 10) !== a.slice(0, 10) ? "+1" : "";
 const stops = (n: number | null) => (n == null ? "" : n === 0 ? "直飛" : `轉機 ${n} 次`);
 
+const MISS: Record<FunnelStage, string> = {
+  total: "",
+  dates: "出發日期不在範圍內",
+  dep_time: "去程時段不符",
+  nights: "停留晚數不符",
+  ret_time: "回程時段不符",
+};
+
+const STAGE: Record<FunnelStage, string> = {
+  total: "查詢月份共",
+  dates: "出發日期內",
+  dep_time: "去程時段內",
+  nights: "停留晚數符合",
+  ret_time: "回程時段符合",
+};
+
+const monthLabel = (m: string) => `${Number(m.slice(5, 7))} 月`;
+
+/** "11 月共 9 筆 → 出發日期內 5 → 去程時段內 2 → 回程時段符合 0", with the step that empties it highlighted. */
+function Funnel({ data }: { data: FareSearchResult }) {
+  const steps = data.funnel ?? [];
+  if (steps.length === 0) return null;
+  const months = (data.months ?? []).map(monthLabel).join("、");
+  const firstZero = steps.findIndex(
+    (s, i) => i > 0 && s.count === 0 && (steps[i - 1]?.count ?? 0) > 0,
+  );
+  return (
+    <div className="mb-4 rounded-xl bg-accent/40 p-3 text-sm">
+      <p className="mb-1 text-xs text-muted-foreground">篩選過程</p>
+      <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+        {steps.map((s, i) => (
+          <span key={s.stage} className="flex items-center gap-1.5">
+            {i > 0 && <span className="text-muted-foreground">→</span>}
+            <span className={i === firstZero ? "font-semibold text-destructive" : undefined}>
+              {s.stage === "total" ? `${months || "查詢月份"} 共` : STAGE[s.stage]} {s.count} 筆
+            </span>
+          </span>
+        ))}
+      </p>
+      {firstZero > 0 && (
+        <p className="mt-1 text-xs text-muted-foreground">
+          是「{STAGE[steps[firstZero]!.stage].replace(/內|符合/, "")}
+          」這個條件把結果篩光了，可以先放寬它。
+        </p>
+      )}
+    </div>
+  );
+}
+
 function FareRow({
   fare,
   rank,
@@ -60,7 +111,11 @@ function FareRow({
     <li className="rounded-xl border border-border p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs text-muted-foreground">#{rank}</p>
+          {fare.miss ? (
+            <p className="text-xs font-medium text-amber-500">{MISS[fare.miss]}</p>
+          ) : (
+            <p className="text-xs text-muted-foreground">#{rank}</p>
+          )}
           <p className="text-xl font-bold">NT${fare.price.toLocaleString("en-US")}</p>
           <p className="text-sm text-muted-foreground">
             {airlineName(fare.airline)}
@@ -302,9 +357,14 @@ export function FareSearch({ onPick }: { onPick: (route: RouteInfo, price: numbe
 
       {search.isSuccess && (
         <div className="mt-6">
+          {(results.length < 10 || (search.data.funnel?.length ?? 0) > 2) && (
+            <Funnel data={search.data} />
+          )}
           {results.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              這個條件目前沒有票價資料。可以放寬日期、時段或回程條件再試一次；比較冷門的航線常常完全沒有資料。
+              {search.data.scanned === 0
+                ? "這條航線在這段期間目前沒有任何票價資料（比較冷門的航線常常如此），可以換個月份或目的地試試。"
+                : "沒有完全符合條件的票。"}
             </p>
           ) : (
             <>
@@ -324,6 +384,26 @@ export function FareSearch({ onPick }: { onPick: (route: RouteInfo, price: numbe
                 ))}
               </ol>
             </>
+          )}
+          {(search.data.near?.length ?? 0) > 0 && (
+            <div className="mt-6">
+              <p className="mb-3 text-sm font-medium">
+                接近的結果
+                <span className="ml-1 font-normal text-muted-foreground">
+                  （只差一個條件，標示的是不符合的那一項）
+                </span>
+              </p>
+              <ol className="space-y-3">
+                {search.data.near!.map((f, i) => (
+                  <FareRow
+                    key={`near-${f.departure_at}-${f.return_at}-${f.flight_number}-${i}`}
+                    fare={f}
+                    rank={i + 1}
+                    onPick={(price) => searched && onPick(searched, price)}
+                  />
+                ))}
+              </ol>
+            </div>
           )}
           <p className="mt-4 text-xs text-muted-foreground">
             票價是 Travelpayouts 彙整近 48

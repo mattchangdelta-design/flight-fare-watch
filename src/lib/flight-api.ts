@@ -206,7 +206,11 @@ export type Fare = {
   transfers: number | null;
   return_transfers: number | null;
   link: string | null;
+  /** Near misses only: the one search condition this fare does not meet. */
+  miss?: FunnelStage;
 };
+
+export type FunnelStage = "total" | "dates" | "dep_time" | "nights" | "ret_time";
 
 export type FareSearch = {
   route: RouteCode;
@@ -223,6 +227,11 @@ export type FareSearch = {
 
 export type FareSearchResult = {
   results: Fare[];
+  /** How many fares are left after each active filter, in order (first entry = everything found). */
+  funnel?: { stage: FunnelStage; count: number }[];
+  /** When results are few: fares that miss exactly one condition, cheapest first. */
+  near?: Fare[];
+  months?: string[];
   scanned: number;
   partial: boolean;
   origin_name?: string;
