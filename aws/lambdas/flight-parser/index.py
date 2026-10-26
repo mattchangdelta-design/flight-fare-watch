@@ -7,16 +7,19 @@ Fares come from Travelpayouts prices_for_dates, fetched once per month the subsc
 Days already past are ignored; a subscription whose whole date range has passed gets no alerts.
 Uses common/fares.py - the same filter as the site's 查詢 - so both agree on what matches.
 Deployed from S3 together with common/settings.py, common/places.py and common/fares.py."""
-import os, json, datetime
+import os, json, datetime, hashlib, time
 from decimal import Decimal
 import boto3
-from boto3.dynamodb.conditions import Attr
+from boto3.dynamodb.conditions import Attr, Key
 import settings  # common/settings.py, zipped alongside
 import places  # common/places.py, zipped alongside
 import fares  # common/fares.py, zipped alongside
 
 _sqs = boto3.client("sqs")
 _table = boto3.resource("dynamodb").Table("subscriptions")
+_hist = boto3.resource("dynamodb").Table("price_history")
+HEARTBEAT_H = 6        # write an unchanged point at least this often so the chart shows the price held
+KEEP_DAYS = 180        # price_history TTL
 QURL = os.environ["QUEUE_URL"]
 
 
@@ -70,6 +73,41 @@ def message_fare(r):
             "origin_airport": r.get("origin_airport"), "destination_airport": r.get("destination_airport")}
 
 
+def cond_hash(cond):
+    return hashlib.sha1(json.dumps(cond, sort_keys=True).encode()).hexdigest()[:8]
+
+
+def itin_key(r):
+    return "|".join(str(r.get(k) or "") for k in ("departure_at", "return_at", "airline", "flight_number"))
+
+
+def record(it, route, cond, hits, now_iso):
+    """Price trend point for this subscription: cheapest matching price (or none), how many fares matched,
+    which itinerary it was, and which conditions. Written when something changed or every HEARTBEAT_H hours."""
+    sub = f"{it['email']}#{route}"
+    best = hits[0] if hits else None
+    point = {"price": int(best["price"]) if best else None, "count": len(hits),
+             "key": itin_key(best) if best else "", "cond": cond_hash(cond)}
+    try:
+        last = _hist.query(KeyConditionExpression=Key("sub").eq(sub), ScanIndexForward=False, Limit=1).get("Items", [])
+        if last:
+            l = last[0]
+            same = (l.get("price") == point["price"] and int(l.get("count", 0)) == point["count"]
+                    and l.get("key", "") == point["key"] and l.get("cond") == point["cond"])
+            age_h = (datetime.datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+                     - datetime.datetime.fromisoformat(l["t"].replace("Z", "+00:00"))).total_seconds() / 3600
+            if same and age_h < HEARTBEAT_H:
+                return
+        item = {"sub": sub, "t": now_iso, "count": point["count"], "key": point["key"], "cond": point["cond"],
+                "expires": int(time.time()) + KEEP_DAYS * 86400}
+        if best:
+            item.update(price=point["price"], depart=best.get("departure_at"), ret=best.get("return_at") or "",
+                        airline=best.get("airline") or "")
+        _hist.put_item(Item=item)
+    except Exception as ex:  # history must never block alerts
+        print("history write failed", sub, type(ex).__name__, ex)
+
+
 def handler(event, context):
     origin, destination = event["origin"], event["destination"]
     route = event.get("route") or f"{origin}-{destination}"
@@ -105,6 +143,8 @@ def handler(event, context):
     matched = 0
     for it, cond, d_from in plans:
         hits, _, _, _ = fares.scan(rows, cond, d_from)
+        if not errors:  # a failed month fetch would look like a price change
+            record(it, route, cond, hits, now)
         if not hits:
             print("no matching fare", it["email"], route, json.dumps(cond))
             continue

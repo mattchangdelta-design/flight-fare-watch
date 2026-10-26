@@ -62,6 +62,15 @@ that passes `fares.check` - the same filter the site's 查詢 uses - ignoring da
 conditions mean next month, any time. Once `date_to` has passed the row gets no alerts (billing is not stopped;
 the site asks the user to update the dates or cancel). Alert emails include a 你的條件 line.
 
+## Price history (trend)
+
+Each parser run writes, per served subscription, a point to DynamoDB `price_history`
+(`sub` = `email#route`, `t` = UTC ISO time): cheapest matching `price` (absent when nothing matched), `count` of
+matching fares, itinerary `key`, `cond` (hash of the conditions), `depart`/`ret`/`airline`. Written only when
+something changed or every 6 h; skipped when a month fetch failed; TTL `expires` = 180 days.
+TODO (next): `GET /history?route=` Lambda + a trend chart on the tracking cards (target line, mark itinerary and
+condition changes, gaps when count = 0).
+
 ## Billing switch (site setting)
 
 `s3://flight-config-656923393380/settings/site.json` = `{"billing_enabled": true|false, "updated_at", "updated_by"}`,
