@@ -1,7 +1,7 @@
 import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { LayoutDashboard } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { PlanCards } from "@/components/PlanCards";
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/Logo";
 import { useAuthUser } from "@/components/RequireAuth";
@@ -36,15 +36,14 @@ export function AppPage() {
       </header>
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-16 sm:px-6">
         <h1 className="text-3xl font-bold break-all">Hi {user.email}</h1>
-        <div className="mt-8 rounded-2xl border border-border bg-card p-8 text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-accent">
-            <LayoutDashboard className="h-6 w-6 text-primary-glow" />
-          </div>
-          <p className="text-lg font-medium">你的航線追蹤儀表板即將上線 — 下一個里程碑會加上訂閱航線的功能。</p>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Your dashboard is coming soon. Route-subscription will be added in the next milestone.
-          </p>
-        </div>
+        <p className="mt-2 text-muted-foreground">
+          選一條航線、設定目標價，下個月的來回最低價一達標，我們就寄信通知你。
+        </p>
+        {user.email ? (
+          <PlanCards email={user.email} />
+        ) : (
+          <p className="mt-8 text-destructive">這個帳號沒有 email，無法訂閱通知。</p>
+        )}
       </main>
     </div>
   );
