@@ -1,7 +1,9 @@
 import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { PlanCards } from "@/components/PlanCards";
+import { useState } from "react";
+import { PlanCards, type Prefill } from "@/components/PlanCards";
+import { FareSearch } from "@/components/FareSearch";
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/Logo";
 import { useAuthUser } from "@/components/RequireAuth";
@@ -18,6 +20,7 @@ export function AppPage() {
   const user = useAuthUser();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [prefill, setPrefill] = useState<Prefill | null>(null);
 
   async function signOut() {
     await queryClient.cancelQueries();
@@ -31,7 +34,9 @@ export function AppPage() {
       <header className="border-b border-border">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
           <Logo />
-          <Button variant="outline" onClick={signOut}>Sign out / 登出</Button>
+          <Button variant="outline" onClick={signOut}>
+            Sign out / 登出
+          </Button>
         </div>
       </header>
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-16 sm:px-6">
@@ -40,7 +45,11 @@ export function AppPage() {
           選一條航線、設定目標價，下個月的來回最低價一達標，我們就寄信通知你。
         </p>
         {user.email ? (
-          <PlanCards email={user.email} />
+          <>
+            <FareSearch onPick={(plan, price) => setPrefill({ plan, price, nonce: Date.now() })} />
+            <h2 className="mt-10 text-lg font-semibold">我的追蹤</h2>
+            <PlanCards email={user.email} prefill={prefill} />
+          </>
         ) : (
           <p className="mt-8 text-destructive">這個帳號沒有 email，無法訂閱通知。</p>
         )}

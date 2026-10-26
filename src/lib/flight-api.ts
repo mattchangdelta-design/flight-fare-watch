@@ -81,3 +81,36 @@ export async function saveSubscription(input: {
   });
   return (await readJson(res)) as Subscription;
 }
+
+export type Fare = {
+  price: number;
+  airline: string | null;
+  flight_number: string | number | null;
+  origin_airport: string | null;
+  destination_airport: string | null;
+  departure_at: string;
+  arrival_at: string | null;
+  return_at: string | null;
+  return_arrival_at: string | null;
+  transfers: number | null;
+  return_transfers: number | null;
+  link: string | null;
+};
+
+export type FareSearch = {
+  plan_name: PlanName;
+  date_from: string;
+  date_to: string;
+  time_from: string;
+  time_to: string;
+};
+
+export async function searchFares(
+  params: FareSearch,
+): Promise<{ results: Fare[]; scanned: number; partial: boolean }> {
+  const q = new URLSearchParams(params);
+  const res = await fetch(`${FLIGHT_API_URL}/fares?${q.toString()}`, {
+    headers: await authHeaders(),
+  });
+  return (await readJson(res)) as { results: Fare[]; scanned: number; partial: boolean };
+}

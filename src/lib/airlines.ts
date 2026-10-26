@@ -1,0 +1,35 @@
+// Chinese names for airlines common on Taipei–Japan/Korea routes; unknown codes fall back to the code.
+export const AIRLINES: Record<string, string> = {
+  CI: "中華航空",
+  BR: "長榮航空",
+  JX: "星宇航空",
+  IT: "台灣虎航",
+  AE: "華信航空",
+  B7: "立榮航空",
+  TR: "酷航",
+  MM: "樂桃航空",
+  GK: "捷星日本",
+  "3K": "捷星亞洲",
+  JL: "日本航空",
+  NH: "全日空",
+  "7C": "濟州航空",
+  LJ: "真航空",
+  TW: "德威航空",
+  KE: "大韓航空",
+  OZ: "韓亞航空",
+  ZE: "易斯達航空",
+  BX: "釜山航空",
+  RS: "首爾航空",
+  CX: "國泰航空",
+  UO: "香港快運",
+  HX: "香港航空",
+  D7: "亞洲航空 X",
+  VJ: "越捷航空",
+  "5J": "宿霧太平洋",
+  MU: "中國東方航空",
+  CA: "中國國際航空",
+  CZ: "中國南方航空",
+};
+
+export const airlineName = (code: string | null | undefined) =>
+  code ? (AIRLINES[code] ? `${AIRLINES[code]}（${code}）` : code) : "-";

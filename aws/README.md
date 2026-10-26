@@ -7,6 +7,7 @@ The site in `src/` only calls the public HTTP API below; it never holds AWS cred
 Site ──POST /subscribe──────▶ flight-save-subscription ──▶ DynamoDB subscriptions
      ──GET /subscriptions───▶ flight-list-subscriptions ─┘
      ──DELETE /subscriptions▶ flight-delete-subscription ┘
+     ──GET /fares────────────▶ flight-search-fares ──▶ Travelpayouts /aviasales/v3/prices_for_dates
 
 EventBridge flight-price-check (rate 30 min)
   └▶ flight-parser-wrapper ── reads s3://flight-config-656923393380/flight-routes.json
@@ -19,7 +20,7 @@ API base URL: `https://z3i3apvemd.execute-api.us-east-1.amazonaws.com` (HTTP API
 
 ## Authentication
 
-The three subscription endpoints require `Authorization: Bearer <Supabase access token>`.
+All four API endpoints require `Authorization: Bearer <Supabase access token>`.
 Each function calls Supabase `GET /auth/v1/user` with that token (and the publishable key from
 `flight/supabase`) and uses the email Supabase returns; any email sent by the client is ignored.
 Missing or invalid token → 401; Supabase unreachable → 503. Results are cached for 5 minutes
@@ -33,6 +34,7 @@ and this Supabase project signs with ES256.)
 | `lambdas/flight-save-subscription` | CFN stack `flight-save-subscription` (inline) | `POST /subscribe` | Upserts `{route, target_price}` for the signed-in user; keeps `created_at` |
 | `lambdas/flight-list-subscriptions` | CFN stack `flight-list-subscriptions` (inline) | `GET /subscriptions` | Returns the signed-in user's rows |
 | `lambdas/flight-delete-subscription` | CFN stack `flight-delete-subscription` (inline) | `DELETE /subscriptions?plan_name=` | Deletes one of the signed-in user's rows |
+| `lambdas/flight-search-fares` | Plain Lambda, code from `s3://…/lambda/search.zip` | `GET /fares?plan_name=&date_from=&date_to=&time_from=&time_to=` | Top 10 round-trip fares (TWD) departing in the date range and local-time window; ≤ 92 days; data is Travelpayouts' 48-hour search cache |
 | `lambdas/flight-parser-wrapper` | CFN stack `flight-parser-wrapper` (inline) | EventBridge rule `flight-price-check` | Env `CONFIG_BUCKET` |
 | `lambdas/flight-parser` | CFN stack `flight-parser` (inline) | Invoked by the wrapper | Env `QUEUE_URL`, `CONFIG_BUCKET`; checks **next month**, round trip |
 | `lambdas/flight-fare-notification` | Plain Lambda, code from `s3://…/lambda/notification.zip` | SQS `flight-fare-queue` (batch item failures) | Env `NOTIFY_FLOOR_HOURS=24`, `REALERT_PCT=20`, `REALERT_ABS_TWD=2000` |

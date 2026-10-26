@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plane } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -11,8 +11,12 @@ import {
   listSubscriptions,
   saveSubscription,
   type Plan,
+  type PlanName,
   type Subscription,
 } from "@/lib/flight-api";
+
+/** A target price picked from the fare search; `nonce` makes repeat picks of the same price re-apply. */
+export type Prefill = { plan: PlanName; price: number; nonce: number };
 
 const fmt = (n: number) => `NT$${n.toLocaleString("en-US")}`;
 
@@ -20,15 +24,26 @@ function PlanCard({
   plan,
   email,
   sub,
+  prefill,
 }: {
   plan: Plan;
   email: string;
   sub: Subscription | undefined;
+  prefill: Prefill | null;
 }) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(sub ? String(sub.target_price) : "");
   const [error, setError] = useState<string | null>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!prefill || prefill.plan !== plan.name) return;
+    setValue(String(prefill.price));
+    setEditing(true);
+    setError(null);
+    cardRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [prefill, plan.name]);
 
   const mutation = useMutation({
     mutationFn: (target: number) =>
@@ -67,7 +82,7 @@ function PlanCard({
   const inputId = `target-${plan.name}`;
 
   return (
-    <div className="rounded-2xl border border-border bg-card p-6">
+    <div ref={cardRef} className="rounded-2xl border border-border bg-card p-6">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent">
@@ -160,7 +175,7 @@ function PlanCard({
   );
 }
 
-export function PlanCards({ email }: { email: string }) {
+export function PlanCards({ email, prefill }: { email: string; prefill: Prefill | null }) {
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["subscriptions", email],
     queryFn: () => listSubscriptions(),
@@ -172,9 +187,15 @@ export function PlanCards({ email }: { email: string }) {
 
   const byRoute = new Map((data ?? []).map((s) => [s.route, s]));
   return (
-    <div className="mt-8 grid gap-6 sm:grid-cols-2">
+    <div className="mt-4 grid gap-6 sm:grid-cols-2">
       {PLANS.map((plan) => (
-        <PlanCard key={plan.name} plan={plan} email={email} sub={byRoute.get(plan.route)} />
+        <PlanCard
+          key={plan.name}
+          plan={plan}
+          email={email}
+          sub={byRoute.get(plan.route)}
+          prefill={prefill}
+        />
       ))}
     </div>
   );
