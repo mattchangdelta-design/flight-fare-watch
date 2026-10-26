@@ -22,3 +22,7 @@ dist
 *.njsproj
 *.sln
 *.sw?
+
+# Python bytecode (aws/ Lambda sources)
+__pycache__/
+*.pyc
