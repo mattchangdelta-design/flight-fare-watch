@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   PLANS,
+  deleteSubscription,
   listSubscriptions,
   saveSubscription,
   type Plan,
@@ -35,6 +36,18 @@ function PlanCard({
     onSuccess: async () => {
       setEditing(false);
       setError(null);
+      await queryClient.invalidateQueries({ queryKey: ["subscriptions", email] });
+    },
+    onError: (e: Error) => setError(e.message),
+  });
+
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const removal = useMutation({
+    mutationFn: () => deleteSubscription(email, plan.name),
+    onSuccess: async () => {
+      setConfirmingDelete(false);
+      setError(null);
+      setValue("");
       await queryClient.invalidateQueries({ queryKey: ["subscriptions", email] });
     },
     onError: (e: Error) => setError(e.message),
@@ -72,16 +85,47 @@ function PlanCard({
         <div className="mt-6">
           <p className="text-sm text-muted-foreground">目前目標價</p>
           <p className="text-2xl font-bold">{fmt(sub.target_price)}</p>
-          <Button
-            variant="outline"
-            className="mt-4 w-full"
-            onClick={() => {
-              setValue(String(sub.target_price));
-              setEditing(true);
-            }}
-          >
-            更新目標價
-          </Button>
+          {confirmingDelete ? (
+            <div className="mt-4 space-y-2 rounded-xl border border-border p-3">
+              <p className="text-sm">
+                確定要取消追蹤{plan.label}嗎？之後不會再收到這條航線的通知。
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  variant="destructive"
+                  className="flex-1"
+                  disabled={removal.isPending}
+                  onClick={() => removal.mutate()}
+                >
+                  {removal.isPending ? "取消中…" : "確定取消"}
+                </Button>
+                <Button
+                  variant="ghost"
+                  disabled={removal.isPending}
+                  onClick={() => setConfirmingDelete(false)}
+                >
+                  保留
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-4 flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => {
+                  setValue(String(sub.target_price));
+                  setEditing(true);
+                }}
+              >
+                更新目標價
+              </Button>
+              <Button variant="ghost" onClick={() => setConfirmingDelete(true)}>
+                取消訂閱
+              </Button>
+            </div>
+          )}
+          {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
         </div>
       )}
 

@@ -50,6 +50,12 @@ export async function listSubscriptions(email: string): Promise<Subscription[]> 
   return body.subscriptions ?? [];
 }
 
+export async function deleteSubscription(email: string, plan_name: PlanName): Promise<void> {
+  const q = new URLSearchParams({ email, plan_name });
+  const res = await fetch(`${FLIGHT_API_URL}/subscriptions?${q.toString()}`, { method: "DELETE" });
+  await readJson(res);
+}
+
 export async function saveSubscription(input: {
   email: string;
   plan_name: PlanName;
