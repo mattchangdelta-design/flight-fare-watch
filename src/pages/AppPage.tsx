@@ -90,7 +90,7 @@ export function AppPage() {
         <h1 className="text-3xl font-bold break-all">Hi {user.email}</h1>
         <p className="mt-2 text-muted-foreground">
           先查詢目前的票價，再幫想去的航線設定目標價。
-          {billing ? `訂閱後（月費 NT$${MONTHLY_FEE_TWD}），` : ""}
+          {billing ? `訂閱後（每條航線月費 NT$${MONTHLY_FEE_TWD}），` : ""}
           只要下個月出發的來回最低價低於你的目標價，我們就會寄信通知你。
         </p>
         {user.email ? (
@@ -100,7 +100,9 @@ export function AppPage() {
                 <AdminBillingSwitch settings={settings.data} />
               </div>
             )}
-            <FareSearch onPick={(plan, price) => setPrefill({ plan, price, nonce: Date.now() })} />
+            <FareSearch
+              onPick={(route, price) => setPrefill({ route, price, nonce: Date.now() })}
+            />
             <h2 className="mt-10 text-lg font-semibold">我的追蹤</h2>
             {settings.isPending ? (
               <p className="mt-4 text-muted-foreground">載入中…</p>

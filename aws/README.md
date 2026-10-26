@@ -11,6 +11,7 @@ Site ──POST /subscribe──────▶ flight-save-subscription ──�
      ──DELETE /subscriptions▶ flight-delete-subscription (refuses paid subscriptions: 409)
      ──POST /cancel─────────▶ flight-cancel-subscription ──▶ ECPay CreditCardPeriodAction (Cancel)
      ──GET|PUT /settings─────▶ flight-settings ──▶ s3://flight-config-656923393380/settings/site.json
+     ──GET /places───────────▶ flight-places ──▶ s3://flight-config-656923393380/places/places.json
      ──GET /fares────────────▶ flight-search-fares ──▶ Travelpayouts /aviasales/v3/prices_for_dates
 
 ECPay ──POST /ecpay-return──▶ flight-ecpay-return   (1st charge → active)          ─┐
@@ -19,7 +20,7 @@ Browser ─ANY /ecpay-result──▶ flight-ecpay-result   (302 → /app?purcha
 flight-cancel-subscription ─────────────────────────────────────────────────────────┘        (welcome / cancel email via Resend)
 
 EventBridge flight-price-check (rate 30 min)
-  └▶ flight-parser-wrapper ── reads s3://flight-config-656923393380/flight-routes.json
+  └▶ flight-parser-wrapper ── distinct routes in DynamoDB subscriptions
        └▶ flight-parser (one per route, async) ── serves only paying rows (see below)
             └▶ SQS flight-fare-queue (one message per subscriber whose target is met)
                  └▶ flight-fare-notification ── dedup in DynamoDB notification_history ──▶ Resend email
@@ -39,6 +40,17 @@ and this Supabase project signs with ES256.)
 
 The ECPay routes (`/ecpay-return`, `/ecpay-period`, `/ecpay-result`) take no token: ECPay calls them.
 The two callbacks trust a request only after its CheckMacValue verifies against `flight/ecpay`.
+
+## Routes
+
+Any Taiwan origin (`TPE` 台北, `RMQ` 台中, `KHH` 高雄) to any destination city with an airport. Requests carry
+`route` = `ORIGIN-DEST` (e.g. `KHH-OSA`); the old `plan_name` (`tokyo`/`seoul`) is still accepted.
+`common/places.py` validates routes against `places/places.json`, which `flight-places-build` builds from
+Travelpayouts' public city data (Traditional Chinese names via `st_chars.json` + Taiwan name overrides,
+popularity = route count, `d` = direct flight from Taiwan). Re-run `flight-places-build` to refresh it.
+Rows store `origin_name`/`destination_name` for emails and the site. One person may track at most
+`MAX_ROUTES` (env on `flight-save-subscription`, default 2) routes; with billing on each route is its own
+monthly subscription. Less popular routes often have no Travelpayouts data at all.
 
 ## Billing switch (site setting)
 
@@ -83,14 +95,16 @@ pending_payment ──(first charge, /ecpay-return)──▶ active ⇄ target u
 |---|---|---|---|
 | `lambdas/flight-save-subscription` (+ `common/auth.py`, `common/ecpay.py`) | CFN stack `flight-save-subscription`, code from S3 | `POST /subscribe` | Env `API_BASE`, `SITE_URL`, `PERIOD_TYPE` (`M`) |
 | `lambdas/flight-list-subscriptions` | CFN stack `flight-list-subscriptions` (inline) | `GET /subscriptions` | Returns the signed-in user's rows (incl. status fields) |
-| `lambdas/flight-delete-subscription` | CFN stack `flight-delete-subscription`, code from S3 | `DELETE /subscriptions?plan_name=` | Deletes an unpaid/ended row; 409 for active or cancelled-in-period |
+| `lambdas/flight-delete-subscription` | CFN stack `flight-delete-subscription`, code from S3 | `DELETE /subscriptions?route=` | Deletes an unpaid/ended row; 409 for active or cancelled-in-period |
 | `lambdas/flight-cancel-subscription` (+ `common/auth.py`, `common/ecpay.py`) | Plain Lambda, code from S3 | `POST /cancel` | Env `STATUS_QUEUE_URL`; ECPay `90100149`/`90100150` are treated as already gone |
 | `lambdas/flight-ecpay-return` (+ `common/ecpay.py`) | Plain Lambda, code from S3 | `POST /ecpay-return` | Env `STATUS_QUEUE_URL`; the only writer of `active` |
 | `lambdas/flight-ecpay-period` (+ `common/ecpay.py`) | Plain Lambda, code from S3 | `POST /ecpay-period` | Extends `current_period_end`; `expired` after 6 failures |
 | `lambdas/flight-ecpay-result` | Plain Lambda, code from S3 | `ANY /ecpay-result` | Env `SITE_URL`; 302 only, never activates |
 | `lambdas/flight-status-notification` | Plain Lambda, code from S3 | SQS `flight-status-queue` (batch item failures) | Env `SITE_URL`; `event_type` welcome/cancel; sends once per order |
 | `lambdas/flight-settings` (+ `common/auth.py`, `common/settings.py`) | Plain Lambda, code from S3 | `GET /settings`, `PUT /settings` | Env `ADMIN_EMAILS`, `CONFIG_BUCKET` |
-| `lambdas/flight-search-fares` | Plain Lambda, code from `s3://…/lambda/search.zip` | `GET /fares?plan_name=&date_from=&date_to=&time_from=&time_to=[&trip_min=&trip_max=&ret_time_from=&ret_time_to=]` | Top 10 round-trip fares (TWD) departing in the date range and local-time window; optional nights-away range (local calendar dates) and return departure window; ≤ 92 days; data is Travelpayouts' 48-hour search cache |
+| `lambdas/flight-places` (+ `common/auth.py`, `common/places.py`) | Plain Lambda, code from S3 | `GET /places?q=` | Destination search (10 results; empty q = popular direct destinations) |
+| `lambdas/flight-places-build` (+ `st_chars.json`) | Plain Lambda, code from S3 | Manual | Rebuilds `places/places.json` (~3.5k cities) |
+| `lambdas/flight-search-fares` | Plain Lambda, code from `s3://…/lambda/search.zip` | `GET /fares?route=&date_from=&date_to=&time_from=&time_to=[&trip_min=&trip_max=&ret_time_from=&ret_time_to=]` | Top 10 round-trip fares (TWD) departing in the date range and local-time window; optional nights-away range (local calendar dates) and return departure window; ≤ 92 days; data is Travelpayouts' 48-hour search cache |
 | `lambdas/flight-parser-wrapper` | CFN stack `flight-parser-wrapper` (inline) | EventBridge rule `flight-price-check` | Env `CONFIG_BUCKET` |
 | `lambdas/flight-parser` | CFN stack `flight-parser`, code from S3 | Invoked by the wrapper | Env `QUEUE_URL`, `CONFIG_BUCKET`; checks **next month**, round trip; serves `active` and `cancelled` rows still inside their period, flips lapsed `cancelled` rows to `expired` |
 | `lambdas/flight-fare-notification` | Plain Lambda, code from `s3://…/lambda/notification.zip` | SQS `flight-fare-queue` (batch item failures) | Env `NOTIFY_FLOOR_HOURS=24`, `REALERT_PCT=20`, `REALERT_ABS_TWD=2000` |

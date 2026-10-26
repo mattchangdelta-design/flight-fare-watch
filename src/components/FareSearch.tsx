@@ -5,13 +5,19 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { airlineName } from "@/lib/airlines";
-import { PLANS, searchFares, type Fare, type PlanName } from "@/lib/flight-api";
+import {
+  ORIGINS,
+  routeInfo,
+  routeLabel,
+  searchFares,
+  type Fare,
+  type RouteInfo,
+} from "@/lib/flight-api";
+import { RoutePicker, selectClass, type RouteValue } from "@/components/RoutePicker";
 
 const WEEK = "日一二三四五六";
 const HOURS = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, "0")}:00`);
 const TRIP_DAYS = Array.from({ length: 14 }, (_, i) => String(i + 1));
-const selectClass =
-  "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring md:text-sm";
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const ymd = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -101,9 +107,12 @@ function FareRow({
   );
 }
 
-export function FareSearch({ onPick }: { onPick: (plan: PlanName, price: number) => void }) {
+export function FareSearch({ onPick }: { onPick: (route: RouteInfo, price: number) => void }) {
   const range = nextMonthRange();
-  const [plan, setPlan] = useState<PlanName>("tokyo");
+  const [route, setRoute] = useState<RouteValue>({
+    origin: ORIGINS[0]!,
+    destination: { code: "TYO", name: "東京" },
+  });
   const [dateFrom, setDateFrom] = useState(range.from);
   const [dateTo, setDateTo] = useState(range.to);
   const [timeFrom, setTimeFrom] = useState("00:00");
@@ -121,6 +130,7 @@ export function FareSearch({ onPick }: { onPick: (plan: PlanName, price: number)
   function submit(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
+    if (!route.destination) return setFormError("請從清單選擇目的地");
     if (dateTo < dateFrom) return setFormError("結束日期要在開始日期之後");
     if ((Date.parse(dateTo) - Date.parse(dateFrom)) / 86400000 > 92)
       return setFormError("日期區間最多 3 個月");
@@ -130,7 +140,7 @@ export function FareSearch({ onPick }: { onPick: (plan: PlanName, price: number)
     if (retFrom && retTo && retTo < retFrom)
       return setFormError("回程時段的結束時間要晚於開始時間");
     search.mutate({
-      plan_name: plan,
+      route: `${route.origin.code}-${route.destination.code}`,
       date_from: dateFrom,
       date_to: dateTo,
       time_from: timeFrom,
@@ -143,7 +153,10 @@ export function FareSearch({ onPick }: { onPick: (plan: PlanName, price: number)
   }
 
   const results = search.data?.results ?? [];
-  const searchedPlan = search.variables?.plan_name ?? plan;
+  // The route the shown results belong to (the picker may have changed since).
+  const searched = search.variables
+    ? routeInfo(search.variables.route, search.data?.origin_name, search.data?.destination_name)
+    : null;
 
   return (
     <section className="mt-8 rounded-2xl border border-border bg-card p-6">
@@ -153,20 +166,8 @@ export function FareSearch({ onPick }: { onPick: (plan: PlanName, price: number)
       </p>
 
       <form onSubmit={submit} className="mt-5 grid gap-4 sm:grid-cols-2">
-        <div className="space-y-2 sm:col-span-2">
-          <Label htmlFor="fs-plan">航線</Label>
-          <select
-            id="fs-plan"
-            className={selectClass}
-            value={plan}
-            onChange={(e) => setPlan(e.target.value as PlanName)}
-          >
-            {PLANS.map((p) => (
-              <option key={p.name} value={p.name}>
-                {p.label}
-              </option>
-            ))}
-          </select>
+        <div className="sm:col-span-2">
+          <RoutePicker value={route} onChange={setRoute} />
         </div>
         <div className="space-y-2">
           <Label htmlFor="fs-from">出發日期（從）</Label>
@@ -303,12 +304,12 @@ export function FareSearch({ onPick }: { onPick: (plan: PlanName, price: number)
         <div className="mt-6">
           {results.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              這個條件目前沒有票價資料。可以放寬日期、時段或回程條件再試一次。
+              這個條件目前沒有票價資料。可以放寬日期、時段或回程條件再試一次；比較冷門的航線常常完全沒有資料。
             </p>
           ) : (
             <>
               <p className="mb-3 text-sm text-muted-foreground">
-                找到 {results.length} 筆（依價格排序）
+                {searched ? `${routeLabel(searched)}：` : ""}找到 {results.length} 筆（依價格排序）
                 {results.length < 10 ? "，這個條件目前只有這些資料" : ""}
                 {search.data.partial ? "；部分月份查詢失敗，結果可能不完整" : ""}
               </p>
@@ -318,7 +319,7 @@ export function FareSearch({ onPick }: { onPick: (plan: PlanName, price: number)
                     key={`${f.departure_at}-${f.return_at}-${f.flight_number}-${i}`}
                     fare={f}
                     rank={i + 1}
-                    onPick={(price) => onPick(searchedPlan, price)}
+                    onPick={(price) => searched && onPick(searched, price)}
                   />
                 ))}
               </ol>

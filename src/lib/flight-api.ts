@@ -6,29 +6,53 @@ export const FLIGHT_API_URL =
   (import.meta.env["VITE_FLIGHT_API_URL"] as string | undefined) ??
   "https://z3i3apvemd.execute-api.us-east-1.amazonaws.com";
 
-export type PlanName = "tokyo" | "seoul";
+/** A route like "TPE-OSA": a Taiwan origin city code, a dash, a destination city code. */
+export type RouteCode = string;
 
-export type Plan = {
-  name: PlanName;
-  label: string;
-  route: string;
-  hint: string;
+/** A city the route picker can show. */
+export type Place = {
+  code: string;
+  name: string;
+  name_en?: string;
+  country?: string;
+  direct?: boolean;
 };
 
-export const PLANS: Plan[] = [
-  {
-    name: "tokyo",
-    label: "台北 ✈ 東京",
-    route: "TPE-TYO",
-    hint: "比對的是下個月出發的最低來回票價",
-  },
-  {
-    name: "seoul",
-    label: "台北 ✈ 首爾",
-    route: "TPE-SEL",
-    hint: "比對的是下個月出發的最低來回票價",
-  },
+/** Taiwan departure cities (the backend accepts only these as origins). */
+export const ORIGINS: Place[] = [
+  { code: "TPE", name: "台北" },
+  { code: "RMQ", name: "台中" },
+  { code: "KHH", name: "高雄" },
 ];
+
+/** Most people may track this many routes (the backend enforces MAX_ROUTES too). */
+export const MAX_ROUTES = 2;
+
+export type RouteInfo = { route: RouteCode; originName: string; destinationName: string };
+
+// Names for rows saved before routes carried their own names.
+const KNOWN: Record<string, string> = {
+  TPE: "台北",
+  RMQ: "台中",
+  KHH: "高雄",
+  TYO: "東京",
+  SEL: "首爾",
+};
+
+export function routeInfo(
+  route: RouteCode,
+  originName?: string | null,
+  destinationName?: string | null,
+): RouteInfo {
+  const [o = "", d = ""] = route.split("-");
+  return {
+    route,
+    originName: originName || KNOWN[o] || o,
+    destinationName: destinationName || KNOWN[d] || d,
+  };
+}
+
+export const routeLabel = (r: RouteInfo) => `${r.originName} ✈ ${r.destinationName}`;
 
 // Monthly fee shown in the UI. Keep in sync with `amount` in the flight/ecpay secret,
 // which is what the checkout actually charges.
@@ -38,8 +62,12 @@ export type SubscriptionStatus = "pending_payment" | "active" | "cancelled" | "e
 
 export type Subscription = {
   email: string;
-  route: string;
-  plan_name: PlanName;
+  route: RouteCode;
+  plan_name?: string;
+  origin?: string;
+  destination?: string;
+  origin_name?: string;
+  destination_name?: string;
   target_price: number;
   currency: "TWD";
   created_at?: string;
@@ -116,8 +144,8 @@ export async function listSubscriptions(): Promise<Subscription[]> {
   return body.subscriptions ?? [];
 }
 
-export async function deleteSubscription(plan_name: PlanName): Promise<void> {
-  const q = new URLSearchParams({ plan_name });
+export async function deleteSubscription(route: RouteCode): Promise<void> {
+  const q = new URLSearchParams({ route });
   const res = await fetch(`${FLIGHT_API_URL}/subscriptions?${q.toString()}`, {
     method: "DELETE",
     headers: await authHeaders(),
@@ -134,7 +162,7 @@ export type SaveResult =
 // /subscribe answers text/html (ECPay checkout form) or application/json (in-place update),
 // so branch on Content-Type instead of always calling res.json().
 export async function saveSubscription(input: {
-  plan_name: PlanName;
+  route: RouteCode;
   target_price: number;
 }): Promise<SaveResult> {
   const res = await fetch(`${FLIGHT_API_URL}/subscribe`, {
@@ -156,11 +184,11 @@ export function goToCheckout(html: string) {
   document.close();
 }
 
-export async function cancelSubscription(plan_name: PlanName): Promise<void> {
+export async function cancelSubscription(route: RouteCode): Promise<void> {
   const res = await fetch(`${FLIGHT_API_URL}/cancel`, {
     method: "POST",
     headers: { "content-type": "application/json", ...(await authHeaders()) },
-    body: JSON.stringify({ plan_name }),
+    body: JSON.stringify({ route }),
   });
   await readJson(res);
 }
@@ -181,7 +209,7 @@ export type Fare = {
 };
 
 export type FareSearch = {
-  plan_name: PlanName;
+  route: RouteCode;
   date_from: string;
   date_to: string;
   time_from: string;
@@ -193,14 +221,29 @@ export type FareSearch = {
   ret_time_to?: string;
 };
 
-export async function searchFares(
-  params: FareSearch,
-): Promise<{ results: Fare[]; scanned: number; partial: boolean }> {
+export type FareSearchResult = {
+  results: Fare[];
+  scanned: number;
+  partial: boolean;
+  origin_name?: string;
+  destination_name?: string;
+};
+
+export async function searchFares(params: FareSearch): Promise<FareSearchResult> {
   const q = new URLSearchParams(
     Object.entries(params).filter((kv): kv is [string, string] => Boolean(kv[1])),
   );
   const res = await fetch(`${FLIGHT_API_URL}/fares?${q.toString()}`, {
     headers: await authHeaders(),
   });
-  return (await readJson(res)) as { results: Fare[]; scanned: number; partial: boolean };
+  return (await readJson(res)) as FareSearchResult;
+}
+
+/** Destination search for the route picker; an empty query returns popular direct destinations. */
+export async function searchPlaces(q: string): Promise<Place[]> {
+  const res = await fetch(`${FLIGHT_API_URL}/places?${new URLSearchParams({ q }).toString()}`, {
+    headers: await authHeaders(),
+  });
+  const body = (await readJson(res)) as { results?: Place[] };
+  return body.results ?? [];
 }
