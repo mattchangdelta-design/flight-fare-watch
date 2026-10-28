@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { RoutePicker, type RouteValue } from "@/components/RoutePicker";
 import { ConditionFields } from "@/components/ConditionFields";
 import { MatchPreview } from "@/components/MatchPreview";
+import { PriceTrend } from "@/components/PriceTrend";
 import {
   compact,
   defaultConditions,
@@ -185,6 +186,7 @@ function PlanCard({
               {status === "active" ? "；月費仍會照常扣款，不需要的話請取消續訂" : ""}。
             </p>
           )}
+          <PriceTrend route={info.route} target={sub.target_price} />
 
           {status === "active" && until && (
             <p className="mt-2 text-sm text-muted-foreground">

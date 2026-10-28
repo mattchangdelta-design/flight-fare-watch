@@ -13,6 +13,7 @@ Site ──POST /subscribe──────▶ flight-save-subscription ──�
      ──GET|PUT /settings─────▶ flight-settings ──▶ s3://flight-config-656923393380/settings/site.json
      ──GET /places───────────▶ flight-places ──▶ s3://flight-config-656923393380/places/places.json
      ──GET /fares────────────▶ flight-search-fares ──▶ Travelpayouts /aviasales/v3/prices_for_dates
+     ──GET /history──────────▶ flight-price-history ──▶ DynamoDB price_history
 
 ECPay ──POST /ecpay-return──▶ flight-ecpay-return   (1st charge → active)          ─┐
       ──POST /ecpay-period──▶ flight-ecpay-period   (2nd charge on → extend period)  ├▶ SQS flight-status-queue
@@ -68,8 +69,10 @@ Each parser run writes, per served subscription, a point to DynamoDB `price_hist
 (`sub` = `email#route`, `t` = UTC ISO time): cheapest matching `price` (absent when nothing matched), `count` of
 matching fares, itinerary `key`, `cond` (hash of the conditions), `depart`/`ret`/`airline`. Written only when
 something changed or every 6 h; skipped when a month fetch failed; TTL `expires` = 180 days.
-TODO (next): `GET /history?route=` Lambda + a trend chart on the tracking cards (target line, mark itinerary and
-condition changes, gaps when count = 0).
+`GET /history?route=TPE-TYO&days=30` (`flight-price-history`, sign-in required, days 1–180) returns the caller's
+own points oldest first. The site's tracking cards have a collapsible 價格走勢 chart (7 天 / 30 天 / 全部): step line of
+the price, dashed target line, gaps where nothing matched, ring markers where the cheapest fare switched itinerary,
+dotted vertical 條件變更 lines where `cond` changed. No backfill: history starts 2026-10-26.
 
 ## Billing switch (site setting)
 
@@ -124,6 +127,7 @@ pending_payment ──(first charge, /ecpay-return)──▶ active ⇄ target u
 | `lambdas/flight-places` (+ `common/auth.py`, `common/places.py`) | Plain Lambda, code from S3 | `GET /places?q=` | Destination search (10 results; empty q = popular direct destinations) |
 | `lambdas/flight-places-build` (+ `st_chars.json`) | Plain Lambda, code from S3 | Manual | Rebuilds `places/places.json` (~3.5k cities) |
 | `lambdas/flight-search-fares` | Plain Lambda, code from `s3://…/lambda/search.zip` | `GET /fares?route=&date_from=&date_to=&time_from=&time_to=[&trip_min=&trip_max=&ret_time_from=&ret_time_to=]` | Top 10 round-trip fares (TWD) departing in the date range and local-time window; optional nights-away range (local calendar dates) and return departure window; ≤ 92 days; data is Travelpayouts' 48-hour search cache |
+| `lambdas/flight-price-history` | Plain Lambda, code from `s3://…/lambda/m2/<sha>/flight-price-history.zip` (+ common/auth.py, common/places.py) | `GET /history?route=&days=` | The caller's own `price_history` points for the trend chart |
 | `lambdas/flight-parser-wrapper` | CFN stack `flight-parser-wrapper` (inline) | EventBridge rule `flight-price-check` | Env `CONFIG_BUCKET` |
 | `lambdas/flight-parser` | CFN stack `flight-parser`, code from S3 | Invoked by the wrapper | Env `QUEUE_URL`, `CONFIG_BUCKET`; checks **next month**, round trip; serves `active` and `cancelled` rows still inside their period, flips lapsed `cancelled` rows to `expired` |
 | `lambdas/flight-fare-notification` | Plain Lambda, code from `s3://…/lambda/notification.zip` | SQS `flight-fare-queue` (batch item failures) | Env `NOTIFY_FLOOR_HOURS=24`, `REALERT_PCT=20`, `REALERT_ABS_TWD=2000` |

@@ -259,3 +259,26 @@ export async function searchPlaces(q: string): Promise<Place[]> {
   const body = (await readJson(res)) as { results?: Place[] };
   return body.results ?? [];
 }
+
+/** One check of a subscription by the parser: cheapest fare matching its conditions (null = none matched). */
+export type HistoryPoint = {
+  t: string;
+  price: number | null;
+  count: number;
+  /** Identifies the itinerary (dates + flight); changes when the cheapest fare switches to another one. */
+  key: string;
+  /** Hash of the tracking conditions in force; changes when the user edits them. */
+  cond: string;
+  depart: string | null;
+  ret: string | null;
+  airline: string | null;
+};
+
+export async function getHistory(route: RouteCode, days: number): Promise<HistoryPoint[]> {
+  const q = new URLSearchParams({ route, days: String(days) });
+  const res = await fetch(`${FLIGHT_API_URL}/history?${q.toString()}`, {
+    headers: await authHeaders(),
+  });
+  const body = (await readJson(res)) as { points?: HistoryPoint[] };
+  return body.points ?? [];
+}
